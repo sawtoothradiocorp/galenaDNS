@@ -106,27 +106,40 @@ have() { command -v "$1" >/dev/null 2>&1; }
 # with ';' and dnslookup with ',' — so match the token, not the punctuation.
 rcode_of() { grep -oE 'status: [A-Z]+' <<< "$1" | head -1 | awk '{print $2}'; }
 
-tls_mode() { ((INSECURE)) && echo "+tls" || echo "+tls-ca"; }
+# kdig's +tls-hostname does not merely set a name — it turns on certificate
+# AUTHENTICATION, and it does so even alongside plain +tls. So --insecure has to
+# drop it entirely and keep only +tls-sni, which selects the certificate without
+# demanding it verify. Getting this wrong made --insecure silently do nothing.
+tls_args() {
+  if ((INSECURE)); then
+    printf '%s\n' "+tls" "+tls-sni=${DOMAIN}"
+  else
+    printf '%s\n' "+tls-ca" "+tls-hostname=${DOMAIN}" "+tls-sni=${DOMAIN}"
+  fi
+}
 
 # --- transports ------------------------------------------------------------
 
 q_dot() {
-  kdig "$(tls_mode)" "+tls-hostname=${DOMAIN}" "+tls-sni=${DOMAIN}" \
-    +timeout=6 +retry=1 "@${TARGET}" "$1" "${2:-A}" 2>&1
+  local ta; IFS=$'\n' read -r -d '' -a ta < <(tls_args; printf '\0')
+  kdig "${ta[@]}" +timeout=6 +retry=1 "@${TARGET}" "$1" "${2:-A}" 2>&1
 }
 q_doh() {
-  kdig "$(tls_mode)" "+https=${DOH_PATH}" "+tls-hostname=${DOMAIN}" "+tls-sni=${DOMAIN}" \
-    +timeout=6 +retry=1 "@${TARGET}" "$1" "${2:-A}" 2>&1
+  local ta; IFS=$'\n' read -r -d '' -a ta < <(tls_args; printf '\0')
+  kdig "${ta[@]}" "+https=${DOH_PATH}" +timeout=6 +retry=1 "@${TARGET}" "$1" "${2:-A}" 2>&1
 }
 q_doq() {
-  kdig "$(tls_mode)" +quic "+tls-hostname=${DOMAIN}" "+tls-sni=${DOMAIN}" \
-    +timeout=6 +retry=1 "@${TARGET}" "$1" "${2:-A}" 2>&1
+  local ta; IFS=$'\n' read -r -d '' -a ta < <(tls_args; printf '\0')
+  kdig "${ta[@]}" +quic +timeout=6 +retry=1 "@${TARGET}" "$1" "${2:-A}" 2>&1
 }
 q_doh3() {
-  # VERIFY=0 is dnslookup's opt-out; set unconditionally rather than building an
-  # argv array, because expanding an empty array trips `set -u` on bash 3.2.
+  # dnslookup takes a URL, so it resolves the host itself rather than accepting
+  # a separate target. In insecure mode aim it at $TARGET — which may be the IP —
+  # so the test does not depend on the control machine's own DNS being able to
+  # resolve the name. In verifying mode the hostname is required, because that is
+  # what the certificate is issued for.
   if ((INSECURE)); then
-    VERIFY=0 dnslookup "$1" "h3://${DOMAIN}${DOH_PATH}" 2>&1
+    VERIFY=0 dnslookup "$1" "h3://${TARGET}${DOH_PATH}" 2>&1
   else
     dnslookup "$1" "h3://${DOMAIN}${DOH_PATH}" 2>&1
   fi
@@ -199,8 +212,8 @@ if have kdig; then
   done
   ((bogus_caught)) || fail "DNSSEC validation is enabled" "no bogus-signature domain was rejected"
 
-  out=$(kdig "$(tls_mode)" "+tls-hostname=${DOMAIN}" "+tls-sni=${DOMAIN}" +dnssec \
-    +timeout=6 +retry=1 "@${TARGET}" "$DNSSEC_OK" A 2>&1)
+  ta_ad=(); IFS=$'\n' read -r -d '' -a ta_ad < <(tls_args; printf '\0')
+  out=$(kdig "${ta_ad[@]}" +dnssec +timeout=6 +retry=1 "@${TARGET}" "$DNSSEC_OK" A 2>&1)
   rc=$(rcode_of "$out")
   # The AD bit is the resolver telling us it validated, rather than just not failing.
   if [[ $rc == NOERROR ]] && grep -qE '^;; Flags:.*\bad\b' <<< "$out"; then
@@ -333,8 +346,8 @@ else
   sent=0 answered=0
   for _ in $(seq 1 200); do
     sent=$((sent + 1))
-    if kdig "$(tls_mode)" "+tls-hostname=${DOMAIN}" "+tls-sni=${DOMAIN}" \
-      +timeout=2 +retry=0 "@${TARGET}" "burst-${RANDOM}.${CONTROL}" A 2>/dev/null \
+    ta_b=(); IFS=$'\n' read -r -d '' -a ta_b < <(tls_args; printf '\0')
+    if kdig "${ta_b[@]}" +timeout=2 +retry=0 "@${TARGET}" "burst-${RANDOM}.${CONTROL}" A 2>/dev/null \
       | grep -q 'status:'; then
       answered=$((answered + 1))
     fi
