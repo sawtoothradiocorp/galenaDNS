@@ -116,7 +116,7 @@ else
 fi
 
 # ===========================================================================
-section "3. unbound runtime configuration"
+section "3. unbound runtime configuration and recursion"
 # ===========================================================================
 # Asserted against the RUNNING daemon, not the file on disk, so a config that was
 # edited but never reloaded cannot pass.
@@ -180,6 +180,48 @@ if grep -rqsE '^\s*(send-client-subnet|client-subnet-always-forward|max-client-s
   fail "no ECS options configured" "client-subnet options present in /etc/unbound"
 else
   pass "no ECS options configured"
+fi
+
+# --- Recursion integrity -----------------------------------------------------
+# These exist because this audit once passed 46/46 while the resolver was
+# forwarding every query to the hosting provider's resolvers. Debian's
+# unbound-resolvconf.service injects a root forward zone at RUNTIME via
+# unbound-control, so it appears in no config file and a config review cannot
+# see it. Only the running daemon knows.
+
+fwd=$(unbound-control list_forwards 2>/dev/null | grep -vE '^[[:space:]]*$' || true)
+if [[ -n $fwd ]]; then
+  fail "unbound has no forwarders" "forwarding to: $(tr '\n' ' ' <<< "$fwd")"
+  note "every query name is being sent to a third party; this is not a recursive resolver"
+else
+  pass "unbound has no forwarders" "resolves from the root"
+fi
+
+rcstate=$(systemctl is-enabled unbound-resolvconf.service 2>&1 || true)
+case $rcstate in
+  masked) pass "unbound-resolvconf is masked" ;;
+  *"No such file"* | *"not found"*) pass "unbound-resolvconf is masked" "unit not present" ;;
+  *) fail "unbound-resolvconf is masked" "state is '${rcstate}' — it will re-add forwarders on the next resolvconf update" ;;
+esac
+
+# The behavioural test: ask an authoritative server which address it sees.
+# A forwarder shows up here as somebody else's IP, which is exactly how the
+# original failure was found.
+node_addrs=$( { ip -4 -o addr show scope global; ip -6 -o addr show scope global; } 2>/dev/null \
+  | awk '{print $4}' | cut -d/ -f1 )
+seen=$(dig +short +time=8 +tries=2 TXT o-o.myaddr.l.google.com @127.0.0.1 2>/dev/null | tr -d '"' | head -1)
+if [[ -z $seen ]]; then
+  seen=$(dig +short +time=8 +tries=2 TXT whoami.ds.akahelp.net @127.0.0.1 2>/dev/null \
+    | tr -d '"' | tr ' ' '\n' | grep -vx ns | head -1)
+fi
+if [[ -z $seen ]]; then
+  warn "recursion egress is this host" "could not reach an egress-reporting authoritative server"
+elif grep -qxF "$seen" <<< "$node_addrs"; then
+  pass "recursion egress is this host" "authoritative servers see ${seen}"
+else
+  fail "recursion egress is this host" "authoritative servers see ${seen}, which is NOT an address of this node"
+  note "our addresses: $(tr '\n' ' ' <<< "$node_addrs")"
+  note "queries are leaving through someone else's resolver"
 fi
 
 # ===========================================================================

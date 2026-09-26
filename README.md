@@ -252,14 +252,17 @@ with fewer than `min_entries` records.
 
 ## What the privacy audit checks
 
-`make audit` runs 10 sections on the server and exits nonzero on any FAIL:
+`make audit` runs 11 sections on the server and exits nonzero on any FAIL:
 
 1. **Sockets** — nothing on port 53 except loopback; all four transports bound.
 2. **Logging** — journald `Storage=volatile`; no `/var/log/journal`; rsyslog,
    syslog-ng, auditd and sysstat not installed; no `log` statement in nftables.
-3. **unbound runtime** — queries the *running* daemon via `unbound-control
-   get_option` for all 14 privacy settings, so a config edited but never reloaded
-   cannot pass. Also confirms ECS is absent from the build and unconfigured.
+3. **unbound runtime and recursion** — queries the *running* daemon via
+   `unbound-control get_option` for all 14 privacy settings, so a config edited
+   but never reloaded cannot pass. Confirms ECS is not loaded and not echoed to
+   clients. Then three recursion-integrity checks: no forward zone,
+   `unbound-resolvconf` masked, and a behavioural test that asks an authoritative
+   server which address it sees and fails if it is not one of this node's.
 4. **Policy zones** — every zone has `rpz-log: no`, and the allowlist is first.
    Reports per-zone record counts and file sizes.
 5. **dnsdist** — config is free of every logging and remote-logging directive;
@@ -419,6 +422,7 @@ scripts/            run from your machine: test-resolver.sh, make-mobileconfig.s
 | `bootstrap.sh` aborts on QUIC support | apt resolved dnsdist from Debian — check `apt-cache policy dnsdist` |
 | DoT/DoH work, DoQ/DoH3 hang for some users | ICMP being dropped upstream of the node, breaking path MTU discovery |
 | Everything resolves but nothing is blocked | Check `make audit` section 4; a feed may have failed validation |
+| A DNS leak test shows your provider's resolvers | unbound is forwarding rather than recursing. `unbound-control list_forwards` should be empty and `unbound-resolvconf.service` masked; `make audit` section 3 checks both |
 | Allowlist entries ignored | The allowlist zone is not first — `make audit` checks this |
 | TLS handshake fails after ~60 days | The deploy hook is not running; `certbot renew --dry-run` |
 | unbound OOMs or restarts | Swap `tif.medium.txt` for `tif.mini.txt`, or use a larger server type |
