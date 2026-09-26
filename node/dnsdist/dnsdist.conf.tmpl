@@ -1,0 +1,162 @@
+-- galena-dns — dnsdist
+--
+-- Rendered by bootstrap.sh; edit node/dnsdist/ in the repo and re-deploy.
+--
+-- Lua rather than dnsdist 2.x's YAML: every upstream example for DoQ, DoH3 and
+-- dynamic blocks is Lua, the privacy-relevant functions are documented as Lua,
+-- and upstream explicitly advises against mixing the two forms.
+--
+-- Role: terminate DoH, DoH3, DoT and DoQ on the public addresses and forward
+-- plaintext to unbound on loopback. dnsdist never touches the disk.
+
+-- ---------------------------------------------------------------------------
+-- Privacy
+-- ---------------------------------------------------------------------------
+
+-- dnsdist otherwise sends a periodic version-check query to secpoll.powerdns.com.
+-- That discloses that this host exists and what version it runs. Off.
+setSecurityPollSuffix("")
+
+-- The ring buffers are the ONLY place client IPs and query names exist anywhere
+-- in this system, and only in RAM, for the few seconds the window covers. They
+-- are required for dynamic blocks; MaxQPSIPRule below works without them.
+-- Responses are not recorded at all. PRIVACY.md documents this window.
+local ringEntries = ${GALENA_DYNBLOCK_RING_ENTRIES}
+if ringEntries > 0 then
+  setRingBuffersSize(ringEntries, 1)
+  setRingBuffersOptions({ recordQueries = true, recordResponses = false })
+else
+  -- Strict mode: no query recording anywhere, at the cost of dynamic blocks.
+  setRingBuffersSize(0)
+  setRingBuffersOptions({ recordQueries = false, recordResponses = false })
+end
+
+-- Deliberately absent, and privacy-audit.sh greps this file to prove it:
+--   carbonServer, newRemoteLogger, RemoteLogAction, RemoteLogResponseAction,
+--   newFrameStreamTcpLogger, newFrameStreamUnixLogger, DnstapLogAction,
+--   LogAction, setVerbose(true), setVerboseLogDestination
+-- Each of those would write or ship query data. None are used.
+
+-- ---------------------------------------------------------------------------
+-- Backend: unbound on loopback
+-- ---------------------------------------------------------------------------
+
+newServer({
+  address = "127.0.0.1:53",
+  name = "unbound",
+  -- Never attach EDNS Client Subnet. The client's network must not leak
+  -- upstream, and unbound is built without the subnet module besides.
+  useClientSubnet = false,
+  -- Health check: "." NS is always in cache, so this costs nothing and does not
+  -- generate recursion every second the way a real hostname lookup would.
+  checkName = ".",
+  checkType = "NS",
+  checkInterval = 5,
+  checkTimeout = 1000,
+  maxCheckFailures = 3,
+  rise = 2,
+})
+
+-- This is a public resolver: everyone is allowed to ask.
+setACL({ "0.0.0.0/0", "::/0" })
+
+-- ---------------------------------------------------------------------------
+-- TLS listeners
+-- ---------------------------------------------------------------------------
+
+local certFile = "/etc/dnsdist/tls/fullchain.pem"
+local keyFile = "/etc/dnsdist/tls/privkey.pem"
+
+local tlsOpts = {
+  reusePort = true,
+  minTLSVersion = "tls1.2",
+  -- Session tickets let clients resume without a full handshake. Rotating the
+  -- key hourly bounds how long a ticket can be correlated across connections.
+  numberOfTicketsKeys = 5,
+  ticketsKeysRotationDelay = 3600,
+}
+
+-- DoT — TCP/853
+addTLSLocal("0.0.0.0:853", certFile, keyFile, tlsOpts)
+addTLSLocal("[::]:853", certFile, keyFile, tlsOpts)
+
+-- DoH — TCP/443, HTTP/2
+local dohOpts = {
+  reusePort = true,
+  minTLSVersion = "tls1.2",
+  -- Do not retain client request headers: they can carry User-Agent and
+  -- forwarding headers that identify a client.
+  keepIncomingHeaders = false,
+}
+addDOHLocal("0.0.0.0:443", certFile, keyFile, { "/dns-query" }, dohOpts)
+addDOHLocal("[::]:443", certFile, keyFile, { "/dns-query" }, dohOpts)
+
+-- DoH3 — UDP/443, HTTP/3 over QUIC. Requires a dnsdist built with quiche;
+-- bootstrap.sh refuses to proceed if `dnsdist --version` lacks dns-over-http3.
+addDOH3Local("0.0.0.0:443", certFile, keyFile, { reusePort = true })
+addDOH3Local("[::]:443", certFile, keyFile, { reusePort = true })
+
+-- DoQ — UDP/853, RFC 9250.
+addDOQLocal("0.0.0.0:853", certFile, keyFile, { reusePort = true })
+addDOQLocal("[::]:853", certFile, keyFile, { reusePort = true })
+
+-- ---------------------------------------------------------------------------
+-- Abuse controls
+-- ---------------------------------------------------------------------------
+
+local exemptNMG = newNMG()
+${GALENA_EXEMPT_LUA}
+
+-- Exempt ranges short-circuit before any limit, so your own testing and the
+-- rate-limit test itself cannot lock you out of your own resolver.
+if ${GALENA_EXEMPT_COUNT} > 0 then
+  addAction(NetmaskGroupRule(exemptNMG), AllowAction())
+end
+
+-- Inline per-IP ceiling. Needs no ring buffer and no state beyond a counter.
+-- Keep this generous: a NATed office or a CGNAT range shares one address, so a
+-- tight limit punishes ordinary users before it inconveniences an abuser.
+addAction(MaxQPSIPRule(${GALENA_MAX_QPS_PER_IP}), DropAction())
+
+-- A public resolver is a reflection-attack amplifier if left open on TCP too.
+setMaxTCPConnectionsPerClient(20)
+setMaxTCPQueriesPerConnection(1000)
+setMaxTCPConnectionDuration(600)
+
+-- Dynamic blocks catch sustained abuse that a per-query ceiling only throttles.
+-- These read the in-RAM ring, so they exist only when ringEntries > 0.
+if ringEntries > 0 then
+  local dbr = dynBlockRulesGroup()
+  dbr:setQueryRate(${GALENA_DYNBLOCK_QPS}, ${GALENA_DYNBLOCK_WINDOW},
+    "Sustained query rate exceeded", ${GALENA_DYNBLOCK_DURATION})
+  -- A flood of NXDOMAINs is the signature of random-subdomain (water torture)
+  -- attacks, which are aimed through us at someone else's authoritative servers.
+  dbr:setRCodeRate(DNSRCode.NXDOMAIN, ${GALENA_DYNBLOCK_QPS}, ${GALENA_DYNBLOCK_WINDOW},
+    "Sustained NXDOMAIN rate exceeded", ${GALENA_DYNBLOCK_DURATION})
+  dbr:excludeRange({ ${GALENA_EXEMPT_LIST} })
+
+  function maintenance()
+    dbr:apply()
+  end
+
+  -- Drop rather than refuse: a refusal is a reply, and replying to a flood is
+  -- doing the attacker's amplification work for them.
+  setDynBlocksAction(DNSAction.Drop)
+end
+
+-- ---------------------------------------------------------------------------
+-- Console — loopback only, used by the ACME deploy hook to reload certificates
+-- ---------------------------------------------------------------------------
+
+setKey("${GALENA_CONSOLE_KEY}")
+controlSocket("127.0.0.1:5199")
+setConsoleACL({ "127.0.0.1/32", "::1/128" })
+-- The console can display recent queries via grepq(); it is reachable only from
+-- localhost, which means only over SSH. Noted in PRIVACY.md.
+setConsoleOutputMaxMsgSize(1000000)
+
+-- ---------------------------------------------------------------------------
+-- Metrics (off unless enable_localhost_metrics)
+-- ---------------------------------------------------------------------------
+
+${GALENA_METRICS_BLOCK}

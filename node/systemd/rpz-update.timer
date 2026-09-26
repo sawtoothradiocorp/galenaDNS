@@ -1,0 +1,15 @@
+[Unit]
+Description=galena-dns: refresh RPZ blocklists on a schedule
+
+[Timer]
+# Hagezi rebuilds every 4-8h and stamps the files "Expires: 8 hours".
+OnBootSec=3min
+OnUnitActiveSec=${GALENA_RPZ_UPDATE_INTERVAL}
+# Spread the load so every galena node on earth is not hitting the CDN at :00.
+RandomizedDelaySec=30min
+# Catch up after downtime rather than waiting a full interval with a stale list.
+Persistent=true
+Unit=rpz-update.service
+
+[Install]
+WantedBy=timers.target

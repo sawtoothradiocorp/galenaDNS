@@ -1,0 +1,33 @@
+[Unit]
+Description=galena-dns: refresh RPZ blocklists
+Documentation=file:///opt/galena/bin/rpz-update.sh
+After=network-online.target unbound.service
+Wants=network-online.target
+# Not Requires=: a blocklist refresh must never be able to take the resolver down.
+After=nss-lookup.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/galena/bin/rpz-update.sh
+TimeoutStartSec=30min
+
+# Blocklist refresh is background work; never let it starve query serving.
+Nice=10
+IOSchedulingClass=idle
+CPUSchedulingPolicy=batch
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+# /run for the unbound control socket, the rpz dir for the zone files themselves.
+ReadWritePaths=/run /var/lib/unbound/rpz
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

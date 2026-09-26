@@ -1,0 +1,136 @@
+# galena-dns — unbound recursive resolver
+#
+# Rendered by bootstrap.sh; do not edit on the node, edit node/unbound/ and re-deploy.
+#
+# Role: full recursion from the root with DNSSEC validation, reachable only from
+# localhost. dnsdist owns the public listeners and forwards here. There is no
+# forwarding to any third-party resolver anywhere in this file.
+
+server:
+    # ---------------------------------------------------------------------
+    # Privacy. Nothing about a query reaches disk, and the audit script
+    # asserts each of these at runtime via `unbound-control get_option`.
+    # ---------------------------------------------------------------------
+    verbosity: 0
+    use-syslog: no
+    logfile: ""
+    log-queries: no
+    log-replies: no
+    log-local-actions: no
+    log-servfail: no
+    log-tag-queryreply: no
+    log-destaddr: no
+    statistics-interval: 0
+    statistics-cumulative: no
+    extended-statistics: no
+
+    # Do not advertise what we are or what trust anchors we hold.
+    hide-identity: yes
+    hide-version: yes
+    hide-trustanchor: yes
+    hide-http-user-agent: yes
+    identity: ""
+    version: ""
+
+    # ---------------------------------------------------------------------
+    # Listeners: loopback only. Nothing here is reachable from the internet,
+    # which is what makes "port 53 is closed" true by construction rather
+    # than by firewall rule alone.
+    # ---------------------------------------------------------------------
+    interface: 127.0.0.1
+    interface: ::1
+    port: 53
+    do-ip4: yes
+    do-ip6: yes
+    do-udp: yes
+    do-tcp: yes
+    prefer-ip6: no
+
+    access-control: 0.0.0.0/0 refuse
+    access-control: ::/0 refuse
+    access-control: 127.0.0.0/8 allow
+    access-control: ::1 allow
+
+    # ---------------------------------------------------------------------
+    # Modules. `respip` must come first so response-policy processing runs on
+    # every query — it is what makes RPZ work at all, and specifically what
+    # makes the response-IP threat zone possible.
+    # ---------------------------------------------------------------------
+    module-config: "respip validator iterator"
+
+    # No EDNS Client Subnet. The `subnet` module is not compiled into Debian's
+    # unbound, so client subnets cannot be forwarded upstream even by mistake;
+    # privacy-audit.sh asserts the module stays absent.
+
+    # ---------------------------------------------------------------------
+    # DNSSEC validation
+    # ---------------------------------------------------------------------
+    auto-trust-anchor-file: "/var/lib/unbound/root.key"
+    root-hints: "/usr/share/dns/root.hints"
+    val-clean-additional: yes
+    harden-dnssec-stripped: yes
+    harden-glue: yes
+    harden-below-nxdomain: yes
+    harden-large-queries: yes
+    harden-short-bufsize: yes
+    aggressive-nsec: yes
+
+    # ---------------------------------------------------------------------
+    # Upstream query privacy
+    # ---------------------------------------------------------------------
+    qname-minimisation: yes
+    qname-minimisation-strict: no
+    use-caps-for-id: no
+
+    # ---------------------------------------------------------------------
+    # Performance. Cache sizes are set deliberately rather than left at the
+    # defaults: the RPZ zones already claim roughly 0.9-1.2 GB of RSS, so the
+    # caches are what stands between this and the OOM killer on a 4 GB node.
+    # ---------------------------------------------------------------------
+    num-threads: ${GALENA_NUM_THREADS}
+    msg-cache-size: ${GALENA_UNBOUND_MSG_CACHE}
+    rrset-cache-size: ${GALENA_UNBOUND_RRSET_CACHE}
+    msg-cache-slabs: ${GALENA_CACHE_SLABS}
+    rrset-cache-slabs: ${GALENA_CACHE_SLABS}
+    infra-cache-slabs: ${GALENA_CACHE_SLABS}
+    key-cache-slabs: ${GALENA_CACHE_SLABS}
+
+    outgoing-range: 8192
+    num-queries-per-thread: 4096
+    so-reuseport: yes
+    so-rcvbuf: 4m
+    so-sndbuf: 4m
+
+    prefetch: yes
+    prefetch-key: yes
+    serve-expired: yes
+    serve-expired-ttl: 3600
+    rrset-roundrobin: yes
+    minimal-responses: yes
+
+    # 1232 avoids IP fragmentation on virtually every path (DNS Flag Day 2020).
+    # Fragmented DNS is both a reliability and a spoofing problem.
+    edns-buffer-size: 1232
+
+    # ---------------------------------------------------------------------
+    # Process
+    # ---------------------------------------------------------------------
+    username: "unbound"
+    directory: "/etc/unbound"
+    # Debian does not chroot unbound; an empty value keeps absolute paths honest.
+    chroot: ""
+    pidfile: "/run/unbound.pid"
+
+    do-not-query-localhost: yes
+    unwanted-reply-threshold: 10000000
+
+remote-control:
+    # Unix socket only — no TCP control port, so nothing to expose or firewall.
+    # rpz-update.sh and privacy-audit.sh both drive unbound through this.
+    control-enable: yes
+    control-interface: /run/unbound.ctl
+    control-use-cert: no
+
+# Response policy zones are generated from the Terraform manifest, because order
+# is semantic: the allowlist must come first. See bin/rpz-update.sh.
+include-toplevel: "/etc/unbound/unbound.conf.d/galena-rpz.conf"

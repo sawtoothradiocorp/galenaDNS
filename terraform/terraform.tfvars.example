@@ -1,0 +1,42 @@
+# Copy to terraform.tfvars and edit. terraform.tfvars is gitignored.
+#
+# Secrets do NOT go in this file:
+#   export HCLOUD_TOKEN=...            # Hetzner Cloud API token (read+write)
+#   export CLOUDFLARE_API_TOKEN=...    # Zone:DNS:Edit, used by `make deploy` only
+
+# Public hostname clients will point at. Must match the TLS cert and your SNI.
+domain = "dns.example.com"
+
+# Let's Encrypt expiry notices.
+acme_email = "you@example.com"
+
+# The only inbound management path. Your current address, as a /32.
+#   curl -4 https://ifconfig.co
+admin_cidr = "203.0.113.4/32"
+
+ssh_public_key_path = "~/.ssh/id_ed25519.pub"
+
+# One node to start. Add a key to add a location — existing nodes are untouched.
+nodes = {
+  fsn1-a = { location = "fsn1" }
+  # hel1-a = { location = "hel1" }
+}
+
+# --- Optional -------------------------------------------------------------
+
+# Leave true for the first run to avoid burning Let's Encrypt rate limits while
+# you shake out DNS-01. The cert will not be publicly trusted until you flip it.
+# acme_staging = true
+
+# Response-IP blocking is the most aggressive layer; set false to drop just it.
+# enable_threat_ip_blocking = true
+
+# Lighter threat feed (~401k entries instead of ~1.75M) for a smaller node.
+# rpz_blocklists = [
+#   { name = "adblock",  url = "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/rpz/pro.txt",         min_entries = 300000 },
+#   { name = "threat",   url = "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/rpz/tif.mini.txt",    min_entries = 250000 },
+#   { name = "threatip", url = "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/rpz/tif-ips.txt",     min_entries = 20000  },
+# ]
+
+# max_qps_per_ip = 40
+# enable_localhost_metrics = false

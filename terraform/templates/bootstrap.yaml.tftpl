@@ -1,0 +1,92 @@
+#cloud-config
+# galena-dns node bootstrap.
+#
+# Deliberately minimal. The full configuration tree lives in node/ and is pushed
+# by `make deploy`, because Hetzner caps user_data at 32 KiB and the rendered
+# config plus scripts does not fit with any headroom. The split also means config
+# changes are a re-deploy rather than a server rebuild.
+#
+# Nothing secret belongs in this file: user_data is readable back out of the
+# Hetzner Cloud API for the lifetime of the server.
+
+package_update: true
+package_upgrade: false
+
+packages:
+  - ca-certificates
+  - curl
+  - rsync
+  - gnupg
+  - nftables
+  - unattended-upgrades
+  - apt-listchanges
+
+write_files:
+  # Volatile logging is established before anything else runs, so even the
+  # provisioning logs never reach disk.
+  - path: /etc/systemd/journald.conf.d/00-galena-privacy.conf
+    permissions: '0644'
+    content: |
+      # Managed by galena-dns. Logs live in RAM and are lost on reboot by design.
+      [Journal]
+      Storage=volatile
+      RuntimeMaxUse=${journal_runtime_max_use}
+      RuntimeMaxFileSize=4M
+      ForwardToSyslog=no
+      ForwardToWall=no
+      Seal=no
+      Audit=no
+      MaxLevelStore=warning
+
+  - path: /etc/ssh/sshd_config.d/00-galena-hardening.conf
+    permissions: '0644'
+    content: |
+      PermitRootLogin prohibit-password
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      ChallengeResponseAuthentication no
+      PubkeyAuthentication yes
+      X11Forwarding no
+      AllowAgentForwarding no
+      MaxAuthTries 3
+
+  - path: /etc/apt/apt.conf.d/20auto-upgrades
+    permissions: '0644'
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+
+  - path: /etc/apt/apt.conf.d/51galena-unattended
+    permissions: '0644'
+    content: |
+      // Security updates only, and never an unattended reboot: a reboot would
+      // drop dnsdist's QUIC sessions and clear the RPZ zones until reload.
+      Unattended-Upgrade::Automatic-Reboot "false";
+      Unattended-Upgrade::Remove-Unused-Dependencies "true";
+      Unattended-Upgrade::MailReport "on-change";
+
+  # Rendered configuration inputs for bootstrap.sh. Not secret.
+  - path: /opt/galena/node.env
+    permissions: '0644'
+    content: |
+%{ for k, v in node_env ~}
+      ${k}="${v}"
+%{ endfor ~}
+
+  # Tab-separated: zone name, source URL, minimum acceptable entry count.
+  - path: /opt/galena/rpz-manifest.tsv
+    permissions: '0644'
+    content: |
+      ${indent(6, rpz_manifest)}
+
+runcmd:
+  # Apply volatile journald immediately and discard anything already on disk.
+  - [ systemctl, restart, systemd-journald ]
+  - [ rm, -rf, /var/log/journal ]
+  - [ systemctl, restart, ssh ]
+  # unbound will own 127.0.0.1:53, so the stub resolver must not.
+  - [ systemctl, disable, --now, systemd-resolved ]
+  - [ systemctl, mask, systemd-resolved ]
+  - [ touch, /opt/galena/.cloud-init-complete ]
+
+final_message: "galena-dns base bootstrap complete after $UPTIME s. Run `make deploy` to configure."

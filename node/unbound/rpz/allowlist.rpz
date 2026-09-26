@@ -1,0 +1,58 @@
+; galena-dns local allowlist (RPZ)
+;
+; This zone is loaded FIRST, ahead of every blocklist, because in RPZ a PASSTHRU
+; is itself a match — and a match stops unbound evaluating any later policy zone.
+; So anything listed here wins outright over all three blocklists.
+;
+; Hagezi publishes no RPZ allowlist (there is no such file in their rpz/
+; directory), so this file is yours to maintain. Edit it here in the repo and
+; re-run `make deploy`; never edit it on the node.
+;
+; ---------------------------------------------------------------------------
+; Owner names are RELATIVE to the zone apex. That is not a typo and not a bug:
+; RPZ encodes the trigger as <trigger>.<zone-apex>, so a bare "example.com"
+; below is exactly how you allow example.com. Do not add a trailing dot.
+; ---------------------------------------------------------------------------
+;
+; To allow a domain (and, separately, its subdomains):
+;
+;     example.com            CNAME rpz-passthru.
+;     *.example.com          CNAME rpz-passthru.
+;
+; To allow an IP ADDRESS — needed when the response-IP threat zone
+; (tif-ips.txt) has a false positive, e.g. a shared CDN address. The format is
+; prefixlength.reversed-octets.rpz-ip, so 203.0.113.42/32 becomes:
+;
+;     32.42.113.0.203.rpz-ip CNAME rpz-passthru.
+;
+; ...and a whole /24, 203.0.113.0/24, becomes (note: only the covered octets,
+; still reversed):
+;
+;     24.0.113.0.203.rpz-ip  CNAME rpz-passthru.
+;
+; For IPv6 the form is prefixlength.reversed-groups.rpz-ip with zero-compression
+; written as a doubled separator, e.g. 2001:db8::1/128:
+;
+;     128.1.zz.db8.2001.rpz-ip CNAME rpz-passthru.
+;
+; After editing, `make deploy` reloads this zone. To check it took effect:
+;     unbound-control auth_zone_reload allowlist.rpz.galena
+; ---------------------------------------------------------------------------
+
+$TTL 3600
+@   SOA localhost. root.localhost. 1 3600 600 86400 3600
+@   NS  localhost.
+
+; --- TEST FIXTURE -----------------------------------------------------------
+; analytics.google.com is present in the adblock blocklist, so allowing it here
+; proves in a single query that passthru beats the blocklists and that zone
+; order is correct. `make test` asserts it returns NOERROR.
+;
+; It is here ONLY for that test. Delete both lines if you do not want this
+; domain reachable through your resolver — `make test` will then report the
+; allowlist check as SKIP rather than failing.
+analytics.google.com    CNAME rpz-passthru.
+*.analytics.google.com  CNAME rpz-passthru.
+; --- end test fixture -------------------------------------------------------
+
+; --- Your allowlist entries below ------------------------------------------

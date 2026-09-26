@@ -1,0 +1,29 @@
+# Terraform state — holds node addresses and resource IDs.
+# (The Cloudflare token is deliberately NOT a Terraform variable, so it is not here.)
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+.terraform/
+# .terraform.lock.hcl IS committed on purpose: it pins provider checksums so
+# everyone gets the same hcloud provider build.
+crash.log
+crash.*.log
+
+# Variable files hold secrets; only the example is tracked
+*.tfvars
+*.tfvars.json
+!terraform.tfvars.example
+
+# Secrets
+secrets/
+*.pem
+*.key
+cloudflare.ini
+
+# Generated client profiles embed your hostname
+*.mobileconfig
+
+# Local scratch
+.env
+*.local
+scratch/
