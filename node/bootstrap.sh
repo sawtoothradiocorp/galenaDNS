@@ -296,6 +296,20 @@ fi
 chown unbound:unbound /var/lib/unbound/root.key
 ok "DNSSEC trust anchor present ($(wc -c < /var/lib/unbound/root.key) bytes)"
 
+# Debian ships unbound-resolvconf.service, which runs `unbound-helper
+# resolvconf_start` and pushes the DHCP-supplied nameservers into unbound as a
+# root forward zone AT RUNTIME, via unbound-control. Nothing appears in any
+# config file. On Hetzner that silently turns full recursion into forwarding to
+# 185.12.64.1/.2 — so the provider sees every query name, which is the single
+# thing this resolver exists to prevent. Mask it, and divert the resolvconf hook
+# so a package upgrade cannot quietly restore it.
+systemctl disable --now unbound-resolvconf.service >/dev/null 2>&1 || true
+systemctl mask unbound-resolvconf.service >/dev/null 2>&1 || true
+if [[ -x /etc/resolvconf/update.d/unbound ]]; then
+  dpkg-divert --local --rename --add /etc/resolvconf/update.d/unbound >/dev/null 2>&1 || true
+fi
+ok "unbound-resolvconf masked (it would force forwarding to the provider's resolvers)"
+
 unbound-checkconf /etc/unbound/unbound.conf >/dev/null || die "unbound configuration is invalid"
 ok "configuration valid ($(grep -c '^rpz:' /etc/unbound/unbound.conf.d/galena-rpz.conf) policy zones)"
 
@@ -311,6 +325,17 @@ done
 dig +short +time=3 +tries=1 @127.0.0.1 -p 53 nlnetlabs.nl A >/dev/null 2>&1 \
   || die "unbound is not answering on 127.0.0.1:53 — check: journalctl -u unbound"
 ok "unbound answering on loopback"
+
+# Belt and braces: clear any forward zone injected before the mask took effect,
+# then assert none remains. A forwarder here would mean queries leave this host
+# as plaintext DNS to a third party instead of being resolved from the root.
+unbound-control forward off >/dev/null 2>&1 || true
+fwd=$(unbound-control list_forwards 2>/dev/null | grep -v '^[[:space:]]*$' || true)
+[[ -z $fwd ]] || die "unbound still has a forward zone configured, so it is NOT recursing:
+  ${fwd}
+Something re-added it after unbound-resolvconf was masked. Investigate before
+serving traffic: this sends every query name to a third-party resolver."
+ok "no forwarders: unbound resolves from the root"
 
 # --------------------------------------------------------------------------
 # Host resolver
