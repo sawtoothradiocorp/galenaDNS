@@ -103,7 +103,8 @@ Two consequences worth knowing:
   sends each of them only the labels it needs. No third-party resolver is used at
   any point: there is no forwarding configured anywhere.
 - **AWS Route 53 holds the DNS zone** for the resolver's hostname, because ACME
-  DNS-01 validation is done there. AWS therefore sees the zone's contents and the
+  DNS-01 validation is done there, and Terraform manages the resolver's A/AAAA
+  records in the same zone. AWS therefore sees the zone's contents and the
   short-lived `_acme-challenge` TXT records, but no client query ever reaches it.
 - **Legal compulsion.** Server operators can be ordered to start logging. What
   this design gives you is that there is nothing retained to hand over about the

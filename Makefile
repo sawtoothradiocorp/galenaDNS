@@ -25,8 +25,8 @@ help: ## Show this help
 	@echo
 	@echo "Required environment:"
 	@echo "  HCLOUD_TOKEN            Hetzner Cloud API token (read+write)   [plan/apply/destroy]"
-	@echo "  AWS_ACCESS_KEY_ID       IAM key for Route 53 DNS-01             [deploy]"
-	@echo "  AWS_SECRET_ACCESS_KEY   its secret                              [deploy]"
+	@echo "  AWS_ACCESS_KEY_ID       Route 53: records + ACME    [plan/apply/deploy]"
+	@echo "  AWS_SECRET_ACCESS_KEY   its secret                  [plan/apply/deploy]"
 
 # --------------------------------------------------------------------------
 # Safe targets
@@ -49,7 +49,7 @@ check: ## Validate everything that can be checked without spending money
 	@$(MAKE) --no-print-directory fmt
 	@echo "OK"
 
-plan: ## Show what would be created (no changes, no cost)
+plan: ## Show what would be created (no changes, no cost; needs AWS creds to read the zone)
 	@$(TF) plan -input=false
 
 nodes: ## Print node addresses and the DNS records you must create

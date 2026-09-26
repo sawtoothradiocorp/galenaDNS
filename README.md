@@ -43,7 +43,7 @@ Two environment variables, never files:
 
 ```sh
 export HCLOUD_TOKEN=...           # Hetzner Cloud, read+write
-export AWS_ACCESS_KEY_ID=...      # IAM key for Route 53 DNS-01
+export AWS_ACCESS_KEY_ID=...      # TXT-only IAM key, installed on the node
 export AWS_SECRET_ACCESS_KEY=...
 ```
 
@@ -53,8 +53,25 @@ be read back out of the Hetzner API for the life of the server. `make deploy`
 installs them over SSH as `/etc/letsencrypt/aws.credentials` (0600) instead, so
 they reach neither.
 
-The IAM key needs exactly three actions. `ChangeResourceRecordSets` can be scoped
-to the one hosted zone, and optionally to TXT records only:
+Two separate credentials, deliberately, because they have very different
+lifetimes and blast radii:
+
+**1. Terraform, for the A/AAAA records.** Runs interactively on your machine, so
+it can use whatever you already have — an SSO profile is ideal because nothing
+long-lived is created:
+
+```sh
+aws sso login --profile <your-profile>
+export AWS_PROFILE=<your-profile>
+```
+
+or set `aws_profile` in `terraform.tfvars`. It needs read access to the zone plus
+`ChangeResourceRecordSets` for A and AAAA.
+
+**2. A long-lived IAM key on the node, for certbot renewal.** This one cannot be
+SSO: renewal runs unattended from a timer for years, and SSO tokens expire in
+hours. Because it only ever writes `_acme-challenge` records, scope it to **TXT
+only** — so a key stolen off the node cannot repoint your hostname:
 
 ```json
 {
@@ -76,6 +93,14 @@ to the one hosted zone, and optionally to TXT records only:
 }
 ```
 
+`make deploy` reads that key from `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`
+and installs it on the node. If you use a profile for Terraform and a key for the
+node, export the key only for the `make deploy` step.
+
+If you would rather give Terraform no Route 53 access at all, set
+`manage_dns_records = false` — the AWS provider then needs no credentials
+whatsoever, and `make nodes` prints the records for you to create by hand.
+
 ## Deploy
 
 ```sh
@@ -85,23 +110,28 @@ $EDITOR terraform/terraform.tfvars      # domain, acme_email, admin_cidr
 make check      # validate everything offline — no cost
 make plan       # see what would be created — no cost
 make apply      # PROMPTS, then creates billable resources
-make nodes      # prints the exact DNS records to create
+make nodes      # prints the records Terraform created
 ```
 
-Create the records it prints at your DNS provider — all nodes share one hostname,
-and multiple A/AAAA records give you round-robin:
+`make plan` reads the Route 53 hosted zone, so it needs AWS credentials in your
+environment too, not just `HCLOUD_TOKEN` — an SSO profile is fine. It still
+creates nothing.
+
+Terraform creates the A/AAAA records itself, so there is no manual DNS step.
+Both nodes' addresses go into one record set, which gives round-robin:
 
 ```
-base.dns.swthrc.com.   A      <ipv4>
-base.dns.swthrc.com.   AAAA   <ipv6>
+base.dns.swthrc.com.   A      <ipv4 of each node>
+base.dns.swthrc.com.   AAAA   <ipv6 of each node>
 ```
 
-Wait for them to resolve (`dig +short base.dns.swthrc.com`), then:
+ACME does not wait on these — certbot creates and removes its own
+`_acme-challenge` TXT record — so you can deploy immediately:
 
 ```sh
 make deploy     # push config, issue the certificate, start everything
 make audit      # assert the privacy properties on the server
-make test       # verify all four transports, DNSSEC and blocking from here
+make test       # verify all four transports, DNSSEC and blocking
 ```
 
 On the first run consider `acme_staging = true` in `terraform.tfvars` to avoid
@@ -121,9 +151,9 @@ nodes = {
 }
 ```
 
-Then `make apply`, add the new node's A/AAAA records to the same hostname, and
-`make deploy`. Each node gets its own certificate for the shared name, which is
-exactly why ACME here is DNS-01 and not HTTP-01 — see below.
+Then `make apply` — which adds the new address to the existing record set
+automatically — and `make deploy`. Each node gets its own certificate for the
+shared name, which is exactly why ACME here is DNS-01 and not HTTP-01.
 
 ## Client setup
 
@@ -307,6 +337,11 @@ disk. Without `reloadAllCertificates()` after renewal it keeps serving the old
 certificate until the process restarts — meaning it would happily serve an expired
 certificate a month after a successful renewal.
 
+**DNS records are in Terraform, credentials are not.** The A/AAAA records are not
+secret and belong in state where they can be kept in step with the node addresses.
+The IAM key is a different matter: a sensitive Terraform variable is written to
+`tfstate` in plaintext, so the key only ever reaches the node over SSH.
+
 **Terraform provisions, `make deploy` configures.** Hetzner caps `user_data` at
 32 KiB and the full config tree does not fit with any headroom. The split also
 means config changes are a re-deploy rather than a server rebuild, and
@@ -344,6 +379,7 @@ it hurts. On a 2 GB server type, `rpz/tif.mini.txt` is the required swap.
 
 ```
 terraform/          infrastructure: server, firewall, SSH key, cloud-init
+  dns.tf            Route 53 A/AAAA records for the resolver hostname
   templates/        cloud-init (minimal: base packages, SSH, volatile logging)
 node/               rsynced to /opt/galena, installed by bootstrap.sh
   bootstrap.sh      idempotent configure; ordering matters, see its header
@@ -360,6 +396,7 @@ scripts/            run from your machine: test-resolver.sh, make-mobileconfig.s
 | Component | Version | Why |
 |---|---|---|
 | hcloud provider | `~> 1.69` | current minor series; patches yes, breaking changes no |
+| aws provider | `~> 6.66` | Route 53 records only |
 | Terraform | `>= 1.9` | `optional()` with defaults in object types |
 | Debian | 13 (trixie) | unbound 1.22.0, certbot 4.0.0 |
 | dnsdist | 2.1.x | current stable; DoQ/DoH3 require ≥ 1.9.0 |
@@ -370,6 +407,8 @@ scripts/            run from your machine: test-resolver.sh, make-mobileconfig.s
 | Symptom | Likely cause |
 |---|---|
 | `certbot` fails during deploy | IAM key lacks `route53:ChangeResourceRecordSets` on the zone, or the name is not in a Route 53 hosted zone |
+| `terraform plan` fails on the zone lookup | AWS credentials missing from your environment, or the key lacks `route53:ListHostedZonesByName` |
+| `apply` fails with a record conflict | The A/AAAA record already exists outside state. Delete it, or import it, or set `manage_dns_records = false` |
 | Renewal fails ~60 days later | The certbot systemd drop-in is missing; check `systemctl cat certbot.service` |
 | `bootstrap.sh` aborts on QUIC support | apt resolved dnsdist from Debian — check `apt-cache policy dnsdist` |
 | DoT/DoH work, DoQ/DoH3 hang for some users | ICMP being dropped upstream of the node, breaking path MTU discovery |

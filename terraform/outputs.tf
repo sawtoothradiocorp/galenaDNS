@@ -16,24 +16,28 @@ output "ssh" {
 }
 
 # Printed rather than documented so the README can never drift from reality.
-# All nodes share one hostname; multiple A/AAAA records give round-robin spread.
+# All nodes share one hostname; multiple values give round-robin spread.
 output "dns_records" {
-  description = "Create exactly these records at your DNS provider before running `make deploy`."
-  value = concat(
-    [for k, s in hcloud_server.node : format("%-28s %-6s %s", "${var.domain}.", "A", s.ipv4_address)],
-    [for k, s in hcloud_server.node : format("%-28s %-6s %s", "${var.domain}.", "AAAA", s.ipv6_address)],
+  description = "The resolver's A/AAAA records. Managed by Terraform unless manage_dns_records = false, in which case create these yourself."
+  value = var.manage_dns_records ? [
+    format("%-32s %-6s %s  (managed by Terraform, TTL %d)", "${var.domain}.", "A",
+    join(" ", [for s in hcloud_server.node : s.ipv4_address]), var.dns_record_ttl),
+    format("%-32s %-6s %s  (managed by Terraform, TTL %d)", "${var.domain}.", "AAAA",
+    join(" ", [for s in hcloud_server.node : s.ipv6_address]), var.dns_record_ttl),
+    ] : concat(
+    [for k, s in hcloud_server.node : format("%-32s %-6s %s  (CREATE THIS YOURSELF)", "${var.domain}.", "A", s.ipv4_address)],
+    [for k, s in hcloud_server.node : format("%-32s %-6s %s  (CREATE THIS YOURSELF)", "${var.domain}.", "AAAA", s.ipv6_address)],
   )
+}
+
+output "route53_zone" {
+  description = "Hosted zone the records were placed in."
+  value       = var.manage_dns_records ? "${local.zone_name} (${data.aws_route53_zone.this[0].zone_id})" : "not managed"
 }
 
 output "deploy_hint" {
   description = "What to do next."
-  value       = <<-EOT
-    1. Create the records listed in `dns_records` at your DNS provider.
-    2. Wait for them to resolve:  dig +short ${var.domain} A
-    3. export AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=...   (Route 53 DNS-01)
-    4. make deploy
-    5. make audit && make test
-  EOT
+  value       = local.deploy_hint
 }
 
 output "estimated_monthly_eur" {

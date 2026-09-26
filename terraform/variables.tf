@@ -19,6 +19,45 @@ variable "project_name" {
 }
 
 # ---------------------------------------------------------------------------
+# DNS records (AWS Route 53)
+# ---------------------------------------------------------------------------
+
+variable "manage_dns_records" {
+  description = "Create the A/AAAA records for var.domain in Route 53. When true, plan and apply need AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in the environment. Set false to manage the records yourself."
+  type        = bool
+  default     = true
+}
+
+variable "route53_zone_name" {
+  description = "Hosted zone holding var.domain, e.g. swthrc.com. Leave empty to derive it as the last two labels of var.domain; set it explicitly for multi-part public suffixes such as example.co.uk."
+  type        = string
+  default     = ""
+}
+
+variable "dns_record_ttl" {
+  description = "TTL for the resolver's A/AAAA records. Kept short so a node can be replaced without clients caching a dead address for long."
+  type        = number
+  default     = 300
+
+  validation {
+    condition     = var.dns_record_ttl >= 60 && var.dns_record_ttl <= 86400
+    error_message = "dns_record_ttl must be between 60 and 86400 seconds."
+  }
+}
+
+variable "aws_region" {
+  description = "Region for the AWS provider. Route 53 is global, but the provider requires one."
+  type        = string
+  default     = "us-east-1"
+}
+
+variable "aws_profile" {
+  description = "Named AWS profile for Terraform to use, e.g. an SSO profile. Leave empty to use AWS_PROFILE or the standard credential chain. Terraform only needs Route 53 access; it is separate from the long-lived key the node uses for ACME renewal."
+  type        = string
+  default     = ""
+}
+
+# ---------------------------------------------------------------------------
 # Nodes
 # ---------------------------------------------------------------------------
 

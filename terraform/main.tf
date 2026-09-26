@@ -47,3 +47,32 @@ resource "hcloud_ssh_key" "admin" {
   public_key = trimspace(file(pathexpand(var.ssh_public_key_path)))
   labels     = local.common_labels
 }
+
+locals {
+  # Assembled here rather than inline in the output: HCL cannot follow a closing
+  # heredoc with the `:` of a conditional.
+  staging_note = var.acme_staging ? join("\n", [
+    "",
+    "NOTE: acme_staging is on, so the certificate is NOT publicly trusted.",
+    "      Pass ARGS=--insecure to `make test` until you set acme_staging = false",
+    "      and re-run `make deploy`.",
+  ]) : ""
+
+  deploy_hint_managed = <<-EOT
+    1. The A/AAAA records were created by Terraform. Confirm they resolve:
+         dig +short ${var.domain} A
+    2. make deploy
+    3. make audit && make test
+    ${local.staging_note}
+  EOT
+
+  deploy_hint_manual = <<-EOT
+    1. Create the records listed in `dns_records` at your DNS provider.
+    2. Wait for them to resolve:  dig +short ${var.domain} A
+    3. make deploy
+    4. make audit && make test
+    ${local.staging_note}
+  EOT
+
+  deploy_hint = var.manage_dns_records ? local.deploy_hint_managed : local.deploy_hint_manual
+}
