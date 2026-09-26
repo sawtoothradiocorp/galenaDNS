@@ -327,9 +327,17 @@ else
     fi
   done
   if ((closed)); then
-    pass "port 53 is closed (UDP and TCP)" "${probe_ip} did not answer"
-    printf '       %sPASS (weak): many networks block outbound 53, so this can pass\n' "$D"
-    printf '       for the wrong reason. Re-run from a second network to be sure.%s\n' "$N"
+    # "It timed out" only means something if plain 53 works from here at all.
+    # Prove the control path against a resolver known to answer on 53, so the
+    # result is a conclusion rather than a hedge.
+    if dig @1.1.1.1 +timeout=3 +tries=1 "$CONTROL" A 2>/dev/null | grep -q 'status: NOERROR'; then
+      pass "port 53 is closed (UDP and TCP)" "${probe_ip} did not answer; outbound 53 verified working from here"
+    else
+      pass "port 53 is closed (UDP and TCP)" "${probe_ip} did not answer"
+      printf '       %sPASS (weak): outbound 53 does not work from this network either,\n' "$D"
+      printf '       so the timeout may be your network rather than the server.\n'
+      printf '       Re-run from a network that permits plain DNS.%s\n' "$N"
+    fi
   fi
 fi
 
