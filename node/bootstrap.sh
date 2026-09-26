@@ -36,13 +36,34 @@ die() {
 
 [[ $EUID -eq 0 ]] || die "must run as root"
 
+# envsubst silently writes an empty string for an unset variable, which produces
+# configs that are wrong rather than rejected — `RuntimeMaxUse=` and
+# `msg-cache-size:` with no value both got past a deploy that way. Every render
+# below declares what it needs first.
+require_vars() {
+  local v missing=()
+  for v in "$@"; do
+    [[ -n ${!v:-} ]] || missing+=("$v")
+  done
+  ((${#missing[@]} == 0)) || die "these settings are empty, so the rendered config would be broken:
+  ${missing[*]}
+They come from ${REPO}/node.env. Check that 'make deploy' pushed it and that
+bootstrap sources it with 'set -a' so envsubst can see them."
+}
+
 # --------------------------------------------------------------------------
 # Inputs
 # --------------------------------------------------------------------------
 step "Loading configuration"
 [[ -r "${REPO}/node.env" ]] || die "${REPO}/node.env missing — was this node created by Terraform?"
+# `set -a` matters: node.env assigns without `export`, and envsubst only
+# substitutes variables that are in the ENVIRONMENT. Without this, every setting
+# that comes from node.env renders as an empty string and the configs come out
+# subtly broken rather than obviously broken.
+set -a
 # shellcheck source=/dev/null
 source "${REPO}/node.env"
+set +a
 
 for v in GALENA_DOMAIN GALENA_ACME_EMAIL GALENA_RPZ_ZONES GALENA_ADMIN_CIDR; do
   [[ -n ${!v:-} ]] || die "${v} is not set in node.env"
@@ -174,6 +195,7 @@ ok "/etc/dnsdist traversable by _dnsdist"
 # Logging: RAM only
 # --------------------------------------------------------------------------
 step "Configuring volatile logging"
+require_vars GALENA_JOURNAL_RUNTIME_MAX_USE
 install -d -m 0755 /etc/systemd/journald.conf.d
 envsubst '${GALENA_JOURNAL_RUNTIME_MAX_USE}' \
   < "${REPO}/systemd/journald-privacy.conf" > /etc/systemd/journald.conf.d/00-galena-privacy.conf
@@ -192,6 +214,7 @@ fi
 # Firewall
 # --------------------------------------------------------------------------
 step "Applying nftables ruleset"
+require_vars GALENA_NFT_ADMIN_RULES
 envsubst '${GALENA_NFT_ADMIN_RULES}' \
   < "${REPO}/nftables/nftables.conf.tmpl" > /etc/nftables.conf
 chmod 0750 /etc/nftables.conf
@@ -247,10 +270,12 @@ install -d -m 0755 /etc/unbound/unbound.conf.d
 
 # Debian ships its own config fragments; ours is the whole configuration.
 rm -f /etc/unbound/unbound.conf.d/root-auto-trust-anchor-file.conf
+require_vars GALENA_NUM_THREADS GALENA_CACHE_SLABS GALENA_UNBOUND_MSG_CACHE GALENA_UNBOUND_RRSET_CACHE
 envsubst '${GALENA_NUM_THREADS} ${GALENA_CACHE_SLABS} ${GALENA_UNBOUND_MSG_CACHE} ${GALENA_UNBOUND_RRSET_CACHE}' \
   < "${REPO}/unbound/unbound.conf.tmpl" > /etc/unbound/unbound.conf
 
 install -d -m 0755 /etc/systemd/system/unbound.service.d
+require_vars GALENA_UNBOUND_MEMORY_MAX
 envsubst '${GALENA_UNBOUND_MEMORY_MAX}' \
   < "${REPO}/systemd/unbound.service.d/hardening.conf" > /etc/systemd/system/unbound.service.d/hardening.conf
 
@@ -305,6 +330,7 @@ if ! "${REPO}/bin/rpz-update.sh"; then
 fi
 
 install -m 0644 "${REPO}/systemd/rpz-update.service" /etc/systemd/system/rpz-update.service
+require_vars GALENA_RPZ_UPDATE_INTERVAL
 envsubst '${GALENA_RPZ_UPDATE_INTERVAL}' \
   < "${REPO}/systemd/rpz-update.timer" > /etc/systemd/system/rpz-update.timer
 systemctl daemon-reload
@@ -409,6 +435,9 @@ else
 fi
 export GALENA_METRICS_BLOCK
 
+require_vars GALENA_DYNBLOCK_RING_ENTRIES GALENA_MAX_QPS_PER_IP GALENA_DYNBLOCK_QPS \
+  GALENA_DYNBLOCK_WINDOW GALENA_DYNBLOCK_DURATION GALENA_EXEMPT_LUA GALENA_EXEMPT_COUNT \
+  GALENA_CONSOLE_KEY GALENA_METRICS_BLOCK
 envsubst '${GALENA_DYNBLOCK_RING_ENTRIES} ${GALENA_MAX_QPS_PER_IP} ${GALENA_DYNBLOCK_QPS} ${GALENA_DYNBLOCK_WINDOW} ${GALENA_DYNBLOCK_DURATION} ${GALENA_EXEMPT_LUA} ${GALENA_EXEMPT_LIST} ${GALENA_EXEMPT_COUNT} ${GALENA_CONSOLE_KEY} ${GALENA_METRICS_BLOCK}' \
   < "${REPO}/dnsdist/dnsdist.conf.tmpl" > /etc/dnsdist/dnsdist.conf
 chown root:_dnsdist /etc/dnsdist/dnsdist.conf

@@ -323,7 +323,7 @@ if `dnsdist --version` does not report both `dns-over-quic` and `dns-over-http3`
 dynamic blocks is Lua, the privacy-relevant functions are documented as Lua, and
 upstream advises against mixing the two forms.
 
-**Debian 13.** unbound 1.22.0 against Debian 12's 1.17.1, plus certbot 4.0.0 with
+**Debian 13.** unbound 1.26.1 (via trixie updates) against Debian 12's 1.17.1, plus certbot 4.0.0 with
 an apt-installable Route 53 plugin (`python3-certbot-dns-route53` 4.0.0-1).
 
 **ACME DNS-01, not HTTP-01.** With two or more nodes behind round-robin A records
@@ -403,9 +403,9 @@ scripts/            run from your machine: test-resolver.sh, make-mobileconfig.s
 | hcloud provider | `~> 1.69` | current minor series; patches yes, breaking changes no |
 | aws provider | `~> 6.66` | Route 53 records only |
 | Terraform | `>= 1.9` | `optional()` with defaults in object types |
-| Debian | 13 (trixie) | unbound 1.22.0, certbot 4.0.0 |
+| Debian | 13 (trixie) | unbound 1.26.1, certbot 4.0.0 |
 | dnsdist | 2.1.x | current stable; DoQ/DoH3 require ≥ 1.9.0 |
-| unbound | 1.22.0 (distro) | security-tracked by Debian |
+| unbound | 1.26.1 (distro) | security-tracked by Debian; trixie has moved past the 1.22.0 it released with |
 
 ## Troubleshooting
 
