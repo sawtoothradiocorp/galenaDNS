@@ -43,16 +43,4 @@ $TTL 3600
 @   SOA localhost. root.localhost. 1 3600 600 86400 3600
 @   NS  localhost.
 
-; --- TEST FIXTURE -----------------------------------------------------------
-; analytics.google.com is present in the adblock blocklist, so allowing it here
-; proves in a single query that passthru beats the blocklists and that zone
-; order is correct. `make test` asserts it returns NOERROR.
-;
-; It is here ONLY for that test. Delete both lines if you do not want this
-; domain reachable through your resolver — `make test` will then report the
-; allowlist check as SKIP rather than failing.
-analytics.google.com    CNAME rpz-passthru.
-*.analytics.google.com  CNAME rpz-passthru.
-; --- end test fixture -------------------------------------------------------
-
 ; --- Your allowlist entries below ------------------------------------------

@@ -134,7 +134,7 @@ Four policy zones, applied in this order, first match wins:
 
 | Zone | Source | Entries | Blocks |
 |---|---|---|---|
-| `allowlist` | `node/unbound/rpz/allowlist.rpz` | yours | overrides everything below |
+| `allowlist` | `node/unbound/rpz/allowlist.rpz` | yours (empty by default) | overrides everything below |
 | `adblock` | Hagezi Pro | ~456,000 | ads, trackers, telemetry |
 | `threat` | Hagezi TIF medium | ~1,747,000 | malware, phishing, scams, C2 |
 | `threatip` | Hagezi TIF IPs | ~60,000 | resolution *to* malicious IPs |
@@ -241,11 +241,16 @@ Two honest caveats the output states for itself:
   which is HTTP/2 only; `dig` has no QUIC transport at all. Hence `dnslookup`.
   If it is missing, the DoH3 test SKIPs loudly instead of passing quietly.
 
-The allowlist test needs a live entry to prove anything, so
-`node/unbound/rpz/allowlist.rpz` ships with `analytics.google.com` allowed. That
-domain is in the blocklist, so allowing it proves passthru precedence in a single
-query. **It is there only for the test — delete those two lines if you do not want
-it reachable**, and the test will report SKIP instead of failing.
+The allowlist ships **empty**, so nothing is un-blocked by default. The allowlist
+check reads `node/unbound/rpz/allowlist.rpz` and tests whatever plain-domain
+entries you have added, reporting SKIP while there are none. Wildcard and
+`rpz-ip` entries are skipped on purpose: querying an invented label under a
+wildcard usually returns a genuine upstream NXDOMAIN, which looks identical to the
+allowlist failing and would be a false alarm.
+
+With the allowlist empty, zone order is still verified — `make audit` section 4
+checks structurally that the allowlist zone is evaluated first, which is the
+property that matters.
 
 ## Design choices
 

@@ -68,7 +68,8 @@ A privacy document that claims a clean sheet is not credible. These files exist:
 Three RPZ layers are applied in this order, and the first match wins:
 
 1. **Allowlist** (`node/unbound/rpz/allowlist.rpz`) — local, version-controlled,
-   evaluated first so it overrides everything below it.
+   evaluated first so it overrides everything below it. Ships empty: nothing is
+   exempt from filtering unless you add it.
 2. **Ads and trackers** — Hagezi Pro, ~456,000 domains.
 3. **Malware, phishing and C2** — Hagezi TIF medium, ~1,747,000 domains.
 4. **Malicious response IPs** — Hagezi TIF IPs, blocking resolution *to* known-bad

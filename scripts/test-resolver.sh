@@ -25,7 +25,9 @@ declare -a FEEDS=()
 
 # Fixtures verified live on 2026-09-25. See README for how each was checked.
 BLOCKED_AD="scorecardresearch.com"    # present in Hagezi Pro
-ALLOWED="analytics.google.com"        # in Pro AND in our allowlist -> must resolve
+# The allowlisted domain is read from the zone file rather than hardcoded, so this
+# test tracks whatever you actually allow instead of a fixture that may be gone.
+ALLOWLIST_FILE=""
 DNSSEC_BAD="sigfail.verteiltesysteme.net"
 DNSSEC_BAD_ALT="dnssec-failed.org"
 DNSSEC_OK="sigok.verteiltesysteme.net"
@@ -40,6 +42,8 @@ Usage: $0 --domain <fqdn> [--ip <addr>] [options]
                         Use it to test one specific node behind round-robin.
   --feed URL            Blocklist feed to sample malware fixtures from.
                         Repeatable. Defaults to Hagezi TIF medium.
+  --allowlist FILE      Allowlist RPZ zone to read a test domain from.
+                        Defaults to node/unbound/rpz/allowlist.rpz.
   --include-ratelimit   Also test rate limiting. This will get your address
                         dynamically blocked for the configured duration.
   --insecure            Skip certificate validation (for acme_staging = true).
@@ -53,6 +57,7 @@ while (($#)); do
     --ip) IP=$2; shift 2 ;;
     --feed) FEEDS+=("$2"); shift 2 ;;
     --doh-path) DOH_PATH=$2; shift 2 ;;
+    --allowlist) ALLOWLIST_FILE=$2; shift 2 ;;
     --include-ratelimit) INCLUDE_RATELIMIT=1; shift ;;
     --insecure) INSECURE=1; shift ;;
     -h | --help) usage; exit 0 ;;
@@ -65,6 +70,9 @@ done
   exit 2
 }
 ((${#FEEDS[@]})) || FEEDS=("https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/rpz/tif.medium.txt")
+if [[ -z $ALLOWLIST_FILE ]]; then
+  ALLOWLIST_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/node/unbound/rpz/allowlist.rpz"
+fi
 
 TARGET="${IP:-$DOMAIN}"
 
@@ -254,15 +262,29 @@ if have kdig; then
     fi
   done
 
-  # Proves passthru precedence: this domain is in the blocklist too, so it can
-  # only resolve if the allowlist zone is evaluated first and wins.
-  rc=$(rcode_of "$(q_dot "$ALLOWED")")
-  if [[ $rc == NOERROR ]]; then
-    pass "allowlisted domain passes" "${ALLOWED} -> NOERROR (passthru beats blocklist)"
-  elif [[ $rc == NXDOMAIN ]]; then
-    fail "allowlisted domain passes" "${ALLOWED} -> NXDOMAIN; allowlist is not winning (zone order?)"
+  # Read a testable entry out of the allowlist zone. Wildcards and rpz-ip
+  # triggers are skipped deliberately: querying a made-up label under a wildcard
+  # usually returns a genuine upstream NXDOMAIN, which looks exactly like the
+  # allowlist failing and would be a false alarm.
+  if [[ ! -r $ALLOWLIST_FILE ]]; then
+    skip "allowlisted domain passes" "no allowlist zone at ${ALLOWLIST_FILE}"
   else
-    fail "allowlisted domain passes" "${ALLOWED} -> ${rc:-no response}"
+    ALLOWED=$(grep -oE '^[a-z0-9][a-z0-9.-]*[[:space:]]+CNAME[[:space:]]+rpz-passthru\.$' "$ALLOWLIST_FILE" \
+      | awk '{print $1}' | grep -v 'rpz-ip$' | head -1)
+    if [[ -z $ALLOWED ]]; then
+      skip "allowlisted domain passes" "allowlist has no plain-domain entries to test"
+      printf '       %sZone order is still checked structurally by `make audit` (section 4).%s\n' "$D" "$N"
+    else
+      rc=$(rcode_of "$(q_dot "$ALLOWED")")
+      if [[ $rc == NOERROR ]]; then
+        pass "allowlisted domain passes" "${ALLOWED} -> NOERROR"
+        printf '       %sProves passthru precedence only if %s is also on a blocklist.%s\n' "$D" "$ALLOWED" "$N"
+      elif [[ $rc == NXDOMAIN ]]; then
+        fail "allowlisted domain passes" "${ALLOWED} -> NXDOMAIN; allowlist is not winning (zone order?)"
+      else
+        fail "allowlisted domain passes" "${ALLOWED} -> ${rc:-no response}"
+      fi
+    fi
   fi
 else
   skip "blocking checks" "kdig missing"
