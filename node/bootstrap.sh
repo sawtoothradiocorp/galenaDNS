@@ -152,6 +152,7 @@ apt-get update -qq || die "apt-get update failed"
 apt-get install -y -qq --no-install-recommends \
   dnsdist \
   unbound \
+  unbound-anchor \
   dns-root-data \
   certbot \
   python3-certbot-dns-route53 \
@@ -279,10 +280,21 @@ require_vars GALENA_UNBOUND_MEMORY_MAX
 envsubst '${GALENA_UNBOUND_MEMORY_MAX}' \
   < "${REPO}/systemd/unbound.service.d/hardening.conf" > /etc/systemd/system/unbound.service.d/hardening.conf
 
-# Trust anchor. unbound-anchor exits 1 when it had to bootstrap the key, which is
-# not an error on a fresh node.
-unbound-anchor -a /var/lib/unbound/root.key || true
+# Trust anchor. unbound-anchor exits 1 when it merely had to bootstrap the key,
+# which is not an error on a fresh node — hence the tolerated failure. But a
+# tolerated failure must not be an unnoticed one: the assertion below is what
+# actually guarantees DNSSEC can validate. (unbound-anchor is a SEPARATE Debian
+# package from unbound; without it this call silently did nothing and the anchor
+# only existed because dns-root-data happened to seed it.)
+unbound-anchor -a /var/lib/unbound/root.key || warn "unbound-anchor reported a problem (normal on a first run)"
+if [[ ! -s /var/lib/unbound/root.key ]]; then
+  # Fall back to the copy dns-root-data ships before giving up.
+  [[ -s /usr/share/dns/root.key ]] \
+    && install -m 0644 -o unbound -g unbound /usr/share/dns/root.key /var/lib/unbound/root.key \
+    || die "no DNSSEC trust anchor at /var/lib/unbound/root.key — validation would be impossible"
+fi
 chown unbound:unbound /var/lib/unbound/root.key
+ok "DNSSEC trust anchor present ($(wc -c < /var/lib/unbound/root.key) bytes)"
 
 unbound-checkconf /etc/unbound/unbound.conf >/dev/null || die "unbound configuration is invalid"
 ok "configuration valid ($(grep -c '^rpz:' /etc/unbound/unbound.conf.d/galena-rpz.conf) policy zones)"

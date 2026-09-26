@@ -56,8 +56,10 @@ section "1. Listening sockets"
 # ===========================================================================
 # The core structural guarantee: plain DNS is reachable only from loopback, so
 # "port 53 is closed" is true by construction and not only by firewall rule.
-nonloopback53=$(ss -lntuHn 2>/dev/null | awk '{print $5}' \
-  | grep -E ':53$' | grep -vE '^(127\.0\.0\.1|\[::1\]|\[::ffff:127)' || true)
+# $4 is the LOCAL address; $5 is the peer and is always 0.0.0.0:* for a listener,
+# so matching on $5 would make this check silently unfalsifiable.
+nonloopback53=$(ss -lntuHn 2>/dev/null | awk '{print $4}' \
+  | grep -E '[:.]53$' | grep -vE '^(127\.0\.0\.1|\[::1\]|\[::ffff:127)' || true)
 if [[ -n $nonloopback53 ]]; then
   fail "nothing on 53 except loopback" "found: $(tr '\n' ' ' <<< "$nonloopback53")"
 else
@@ -67,7 +69,7 @@ fi
 for spec in "tcp:443:DoH" "tcp:853:DoT" "udp:443:DoH3" "udp:853:DoQ"; do
   IFS=: read -r proto port label <<< "$spec"
   flag=$([[ $proto == tcp ]] && echo -ltnH || echo -lunH)
-  if ss "$flag" 2>/dev/null | awk '{print $5}' | grep -qE "[:.]${port}$"; then
+  if ss "$flag" 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${port}$"; then
     pass "${label} is listening (${proto}/${port})"
   else
     fail "${label} is listening (${proto}/${port})" "not bound"
@@ -152,12 +154,27 @@ else
 fi
 
 # EDNS Client Subnet would send the client's network to every authoritative
-# server we talk to. Debian builds unbound without the module, so it is not
-# merely disabled but absent; verify that stays true.
+# server we talk to. Debian's unbound IS built with subnetcache, so the thing to
+# assert is that it is not LOADED — the build being capable of it is not the
+# question.
 if unbound -V 2>&1 | grep -qiE 'modules:.*subnet'; then
-  warn "ECS module is absent from this build" "subnet module is compiled in — verify it is unused"
+  note "this build includes subnetcache; what matters is whether it is loaded"
+fi
+mc=$(unbound-control get_option module-config 2>/dev/null || echo "?")
+if grep -qiE 'subnet' <<< "$mc"; then
+  fail "ECS module is not loaded" "module-config contains a subnet module: ${mc}"
 else
-  pass "ECS module is absent from this build"
+  pass "ECS module is not loaded" "module-config = ${mc}"
+fi
+
+# And prove it behaviourally: a client that sends ECS must get none back.
+if command -v dig >/dev/null 2>&1; then
+  if dig +time=5 +tries=1 @127.0.0.1 +subnet=203.0.113.0/24 example.com A 2>/dev/null \
+    | grep -qi 'CLIENT-SUBNET'; then
+    fail "ECS is not echoed to clients" "the resolver returned a CLIENT-SUBNET option"
+  else
+    pass "ECS is not echoed to clients"
+  fi
 fi
 if grep -rqsE '^\s*(send-client-subnet|client-subnet-always-forward|max-client-subnet)' /etc/unbound/; then
   fail "no ECS options configured" "client-subnet options present in /etc/unbound"
@@ -240,7 +257,10 @@ if [[ -r $dconf ]]; then
     fail "dnsdist version phone-home is disabled" "setSecurityPollSuffix(\"\") not found"
   fi
 
-  ring=$(grep -oE 'setRingBuffersSize\([0-9]+' "$dconf" | head -1 | grep -oE '[0-9]+' || echo "?")
+  # Read the rendered variable, not setRingBuffersSize(...): the first literal
+  # number in the file is the 0 in the disabled branch, which misreported a
+  # 5000-entry ring as 0.
+  ring=$(grep -oE '^local ringEntries = [0-9]+' "$dconf" | grep -oE '[0-9]+$' || echo "?")
   if grep -q 'recordResponses = false' "$dconf"; then
     pass "dnsdist records no responses in RAM" "ring=${ring} queries, responses off"
   else
@@ -345,9 +365,12 @@ section "10. Empirical test: does a query reach the disk?"
 marker="galena-audit-$(tr -dc a-z0-9 < /dev/urandom | head -c 16).invalid"
 probe_ok=0
 
-if command -v kdig >/dev/null 2>&1 && [[ -n ${GALENA_DOMAIN:-} ]]; then
-  if kdig +tls +timeout=5 "@127.0.0.1" "+tls-hostname=${GALENA_DOMAIN}" \
-    "+tls-sni=${GALENA_DOMAIN}" "$marker" A >/dev/null 2>&1; then
+if command -v kdig >/dev/null 2>&1; then
+  # `+tls` alone is opportunistic. Adding +tls-hostname would make kdig VERIFY
+  # the certificate, which fails while acme_staging is on — and verification is
+  # `make test`'s job, not this one. All this probe needs is for the query to
+  # travel the real DoT path through dnsdist.
+  if kdig +tls +timeout=5 "@127.0.0.1" "$marker" A >/dev/null 2>&1; then
     probe_ok=1
   fi
 fi

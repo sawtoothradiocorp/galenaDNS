@@ -58,9 +58,11 @@ server:
     # ---------------------------------------------------------------------
     module-config: "respip validator iterator"
 
-    # No EDNS Client Subnet. The `subnet` module is not compiled into Debian's
-    # unbound, so client subnets cannot be forwarded upstream even by mistake;
-    # privacy-audit.sh asserts the module stays absent.
+    # No EDNS Client Subnet. Debian's unbound IS built with the subnetcache
+    # module, so this is a matter of not loading it rather than it being
+    # unavailable: module-config above deliberately omits it, and no
+    # send-client-subnet option is set anywhere. privacy-audit.sh asserts both,
+    # and verifies a client sending ECS gets no ECS back.
 
     # ---------------------------------------------------------------------
     # DNSSEC validation
