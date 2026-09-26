@@ -312,7 +312,7 @@ section "7. Scheduled jobs"
 # ===========================================================================
 crons=$(find /etc/cron.d /etc/cron.daily /etc/cron.hourly /etc/cron.weekly /etc/cron.monthly \
   -type f 2>/dev/null \
-  | grep -vE '/(e2scrub_all|dpkg|man-db|apt-compat|logrotate|plocate|certbot)$' \
+  | grep -vE '/(e2scrub_all|dpkg|man-db|apt-compat|logrotate|plocate|certbot|aptitude)$' \
   | grep -vE '/\.placeholder$' || true)
 if [[ -n $crons ]]; then
   warn "no unexpected cron jobs" "review these:"

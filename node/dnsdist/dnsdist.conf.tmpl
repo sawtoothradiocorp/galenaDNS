@@ -51,10 +51,17 @@ newServer({
   -- generate recursion every second the way a real hostname lookup would.
   checkName = ".",
   checkType = "NS",
-  checkInterval = 5,
+  -- Fast recovery matters more than caution for a backend on loopback. With the
+  -- defaults (5s interval, rise 2) every dnsdist restart left a ~10 second window
+  -- where dnsdist was up but had no usable backend, and answered DoH with
+  -- "403 DoH dropped query". Observed during a deploy. One successful check at a
+  -- 1s interval brings it back almost immediately.
+  checkInterval = 1,
   checkTimeout = 1000,
+  rise = 1,
+  -- Still three consecutive failures before marking it down, so a single slow
+  -- check cannot flap the backend out of service.
   maxCheckFailures = 3,
-  rise = 2,
 })
 
 -- This is a public resolver: everyone is allowed to ask.
