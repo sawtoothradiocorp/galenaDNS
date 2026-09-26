@@ -6,6 +6,11 @@
 .terraform/
 # .terraform.lock.hcl IS committed on purpose: it pins provider checksums so
 # everyone gets the same hcloud provider build.
+# Saved plans embed variable values and every resource attribute. `make apply`
+# deletes its plan, but an interrupted apply leaves one behind.
+.tfplan
+*.tfplan
+
 crash.log
 crash.*.log
 

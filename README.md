@@ -122,6 +122,19 @@ make nodes      # prints the records Terraform created
 environment too, not just `HCLOUD_TOKEN` — an SSO profile is fine. It still
 creates nothing.
 
+Two traps here, both of which fail loudly rather than quietly:
+
+- Terraform authenticates to AWS through `aws_profile` (an SSO profile), while the
+  *node's* certbot uses the scoped IAM user's static keys. If both are present the
+  provider refuses to choose — `A Profile was specified along with the environment
+  variables AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY`. So source the ACME
+  credentials for `make deploy` only, and `unset AWS_ACCESS_KEY_ID
+  AWS_SECRET_ACCESS_KEY` before `make plan` or `make apply`. An expired SSO token
+  shows up the same way; `aws sso login --profile <name>` fixes it.
+- `make apply` and `make destroy` prompt for a typed confirmation, so they need a
+  real terminal. Run them from an interactive shell — piped or non-tty stdin gets
+  a message telling you so, not an unattended apply.
+
 Terraform creates the A/AAAA records itself, so there is no manual DNS step.
 Both nodes' addresses go into one record set, which gives round-robin:
 
@@ -129,6 +142,15 @@ Both nodes' addresses go into one record set, which gives round-robin:
 base.dns.swthrc.com.   A      <ipv4 of each node>
 base.dns.swthrc.com.   AAAA   <ipv6 of each node>
 ```
+
+Reverse DNS is set too, in `terraform/rdns.tf`. Both addresses get a PTR of
+`base.dns.swthrc.com` rather than Hetzner's default
+`static.17.3.28.2.clients.your-server.de`. The PTR lives at Hetzner because the
+reverse zones for their ranges are delegated to them, so it will never appear in
+the Route 53 zone. Nothing in DoH/DoT/DoQ validates a PTR — this is so the node
+is identifiable as ours to abuse desks and traceroutes. With several nodes they
+all share one PTR, which stays forward-confirmed because the A/AAAA record set
+already lists every node.
 
 ACME does not wait on these — certbot creates and removes its own
 `_acme-challenge` TXT record — so you can deploy immediately:
@@ -388,6 +410,7 @@ it hurts. On a 2 GB server type, `rpz/tif.mini.txt` is the required swap.
 ```
 terraform/          infrastructure: server, firewall, SSH key, cloud-init
   dns.tf            Route 53 A/AAAA records for the resolver hostname
+  rdns.tf           PTR records at Hetzner for each node's addresses
   templates/        cloud-init (minimal: base packages, SSH, volatile logging)
 node/               rsynced to /opt/galena, installed by bootstrap.sh
   bootstrap.sh      idempotent configure; ordering matters, see its header

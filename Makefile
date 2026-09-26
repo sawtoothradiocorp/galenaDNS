@@ -67,6 +67,10 @@ apply: ## Create/update infrastructure (PROMPTS — this costs money)
 	@echo "This creates billable Hetzner resources."
 	@echo "Estimated cost: $$($(TF) output -raw estimated_monthly_eur 2>/dev/null || echo 'run make plan first')"
 	@echo
+	@[ -t 0 ] || { \
+	  echo "Not attached to a terminal, so there is nothing to confirm on."; \
+	  echo "Run this target from an interactive shell — the prompt is the whole point."; \
+	  rm -f terraform/.tfplan; exit 1; }
 	@read -r -p 'Type "yes" to apply: ' ans; [ "$$ans" = yes ] || { echo "Aborted."; rm -f terraform/.tfplan; exit 1; }
 	@$(TF) apply -input=false .tfplan
 	@rm -f terraform/.tfplan
@@ -78,6 +82,10 @@ destroy: ## Destroy all infrastructure (PROMPTS TWICE — irreversible)
 	@echo
 	@echo "This permanently destroys the resolver node(s) and their IP addresses."
 	@echo "Clients configured with your hostname will stop resolving."
+	@[ -t 0 ] || { \
+	  echo "Not attached to a terminal, so there is nothing to confirm on."; \
+	  echo "Run this target from an interactive shell — the prompt is the whole point."; \
+	  exit 1; }
 	@read -r -p 'Type "destroy" to continue: ' a; [ "$$a" = destroy ] || { echo "Aborted."; exit 1; }
 	@d=$$($(TF) output -raw domain); \
 		read -r -p "Really? This cannot be undone. Type $$d to confirm: " b; \

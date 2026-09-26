@@ -30,6 +30,16 @@ output "dns_records" {
   )
 }
 
+# PTRs are set at Hetzner, not in Route 53, so they will not show up in the
+# hosted zone. Printed here so `make nodes` output and reality can be compared.
+output "rdns_records" {
+  description = "Reverse DNS set on each node's public addresses."
+  value = concat(
+    [for k, r in hcloud_rdns.ipv4 : format("%-40s PTR    %s", "${r.ip_address}.", r.dns_ptr)],
+    [for k, r in hcloud_rdns.ipv6 : format("%-40s PTR    %s", "${r.ip_address}.", r.dns_ptr)],
+  )
+}
+
 output "route53_zone" {
   description = "Hosted zone the records were placed in."
   value       = var.manage_dns_records ? "${local.zone_name} (${data.aws_route53_zone.this[0].zone_id})" : "not managed"
