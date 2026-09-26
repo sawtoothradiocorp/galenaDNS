@@ -91,6 +91,17 @@ destroy: ## Destroy all infrastructure (PROMPTS TWICE — irreversible)
 deploy: ## Push node/ and run bootstrap.sh on every node
 	@: $${AWS_ACCESS_KEY_ID:?must be set — IAM key with Route 53 access for ACME DNS-01}
 	@: $${AWS_SECRET_ACCESS_KEY:?must be set — secret for AWS_ACCESS_KEY_ID}
+	@# AWS_SESSION_TOKEN means these are temporary STS/SSO credentials. They would
+	@# issue a certificate today and then expire, so renewal would fail silently in
+	@# hours and dnsdist would serve an expired certificate. Refuse them.
+	@if [ -n "$${AWS_SESSION_TOKEN:-}" ]; then \
+		echo "ERROR: AWS_SESSION_TOKEN is set, so these are temporary SSO/STS credentials."; \
+		echo "       certbot renewal runs unattended for years and these expire in hours,"; \
+		echo "       which would break renewal silently. Use a long-lived IAM user key"; \
+		echo "       scoped to TXT records only (see README), or set manage_dns_records=false"; \
+		echo "       and handle ACME yourself."; \
+		exit 1; \
+	fi
 	@ips=$$($(TF) output -json nodes | python3 -c 'import json,sys;[print(v["ipv4"]) for v in json.load(sys.stdin).values()]'); \
 	[ -n "$$ips" ] || { echo "No nodes. Run 'make apply' first."; exit 1; }; \
 	for ip in $$ips; do \

@@ -97,6 +97,11 @@ only** — so a key stolen off the node cannot repoint your hostname:
 and installs it on the node. If you use a profile for Terraform and a key for the
 node, export the key only for the `make deploy` step.
 
+`make deploy` **refuses to run if `AWS_SESSION_TOKEN` is set**, because that means
+temporary SSO or STS credentials. Those would issue a certificate today and then
+expire, so renewal would fail silently within hours and dnsdist would serve an
+expired certificate — the exact outage this repo works hardest to avoid.
+
 If you would rather give Terraform no Route 53 access at all, set
 `manage_dns_records = false` — the AWS provider then needs no credentials
 whatsoever, and `make nodes` prints the records for you to create by hand.
@@ -410,6 +415,7 @@ scripts/            run from your machine: test-resolver.sh, make-mobileconfig.s
 | `terraform plan` fails on the zone lookup | AWS credentials missing from your environment, or the key lacks `route53:ListHostedZonesByName` |
 | `apply` fails with a record conflict | The A/AAAA record already exists outside state. Delete it, or import it, or set `manage_dns_records = false` |
 | Renewal fails ~60 days later | The certbot systemd drop-in is missing; check `systemctl cat certbot.service` |
+| Renewal fails within hours | Temporary SSO/STS credentials were installed. `make deploy` blocks this, but check `/etc/letsencrypt/aws.credentials` for a session token |
 | `bootstrap.sh` aborts on QUIC support | apt resolved dnsdist from Debian — check `apt-cache policy dnsdist` |
 | DoT/DoH work, DoQ/DoH3 hang for some users | ICMP being dropped upstream of the node, breaking path MTU discovery |
 | Everything resolves but nothing is blocked | Check `make audit` section 4; a feed may have failed validation |
