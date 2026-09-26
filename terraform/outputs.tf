@@ -69,3 +69,17 @@ output "rpz_feed_urls" {
   description = "Active blocklist feed URLs. `make test` samples malware fixtures from these so the test tracks the deployed config instead of hardcoded domains."
   value       = [for z in local.active_blocklists : z.url]
 }
+
+# These two are what bootstrap.sh reads. They are outputs, not just cloud-init
+# content, because cloud-init only runs on FIRST boot: without them here, editing
+# any galena setting in tfvars could never reach an already-running node.
+# `make deploy` pushes them on every run, so they are the live source of truth.
+output "node_env" {
+  description = "Rendered node.env contents (no secrets)."
+  value       = join("\n", [for k in sort(keys(local.node_env)) : "${k}=\"${local.node_env[k]}\""])
+}
+
+output "rpz_manifest" {
+  description = "Tab-separated blocklist manifest: name, url, min_entries."
+  value       = local.rpz_manifest
+}

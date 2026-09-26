@@ -107,10 +107,19 @@ deploy: ## Push node/ and run bootstrap.sh on every node
 	for ip in $$ips; do \
 		echo "==> $$ip"; \
 		echo "    waiting for cloud-init"; \
-		timeout 600 bash -c "until ssh $(SSH_OPT) root@$$ip 'test -f $(REMOTE)/.cloud-init-complete' 2>/dev/null; do sleep 10; done" \
-			|| { echo "    cloud-init did not finish in 10m"; exit 1; }; \
+		ready=0; \
+		for _ in $$(seq 1 60); do \
+			if ssh $(SSH_OPT) "root@$$ip" 'test -f $(REMOTE)/.cloud-init-complete' 2>/dev/null; then ready=1; break; fi; \
+			sleep 10; \
+		done; \
+		[ "$$ready" = 1 ] || { echo "    cloud-init did not finish in 10m"; exit 1; }; \
 		echo "    syncing config"; \
-		rsync -az --delete -e "ssh $(SSH_OPT)" node/ "root@$$ip:$(REMOTE)/"; \
+		rsync -az --delete \
+			--exclude node.env --exclude rpz-manifest.tsv --exclude .cloud-init-complete \
+			-e "ssh $(SSH_OPT)" node/ "root@$$ip:$(REMOTE)/"; \
+		echo "    pushing rendered settings"; \
+		{ $(TF) output -raw node_env; echo; } | ssh $(SSH_OPT) "root@$$ip" 'cat > $(REMOTE)/node.env'; \
+		{ $(TF) output -raw rpz_manifest; echo; } | ssh $(SSH_OPT) "root@$$ip" 'cat > $(REMOTE)/rpz-manifest.tsv'; \
 		echo "    installing ACME credentials"; \
 		printf '[default]\naws_access_key_id = %s\naws_secret_access_key = %s\nregion = %s\n' \
 			"$$AWS_ACCESS_KEY_ID" "$$AWS_SECRET_ACCESS_KEY" "$${AWS_DEFAULT_REGION:-us-east-1}" \
