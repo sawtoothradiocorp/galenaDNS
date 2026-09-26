@@ -30,7 +30,7 @@ output "deploy_hint" {
   value       = <<-EOT
     1. Create the records listed in `dns_records` at your DNS provider.
     2. Wait for them to resolve:  dig +short ${var.domain} A
-    3. export CLOUDFLARE_API_TOKEN=...   (Zone:DNS:Edit on the zone holding ${var.domain})
+    3. export AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=...   (Route 53 DNS-01)
     4. make deploy
     5. make audit && make test
   EOT

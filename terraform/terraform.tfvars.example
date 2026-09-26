@@ -2,17 +2,18 @@
 #
 # Secrets do NOT go in this file:
 #   export HCLOUD_TOKEN=...            # Hetzner Cloud API token (read+write)
-#   export CLOUDFLARE_API_TOKEN=...    # Zone:DNS:Edit, used by `make deploy` only
+#   export AWS_ACCESS_KEY_ID=...       # Route 53 DNS-01, used by `make deploy` only
+#   export AWS_SECRET_ACCESS_KEY=...
 
 # Public hostname clients will point at. Must match the TLS cert and your SNI.
-domain = "dns.example.com"
+domain = "base.dns.swthrc.com"
 
 # Let's Encrypt expiry notices.
 acme_email = "you@example.com"
 
 # The only inbound management path. Your current address, as a /32.
 #   curl -4 https://ifconfig.co
-admin_cidr = "203.0.113.4/32"
+admin_cidr = "203.0.113.4/32"   # placeholder (RFC 5737) - use your own
 
 ssh_public_key_path = "~/.ssh/id_ed25519.pub"
 

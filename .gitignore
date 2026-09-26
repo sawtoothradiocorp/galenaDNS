@@ -1,5 +1,5 @@
 # Terraform state — holds node addresses and resource IDs.
-# (The Cloudflare token is deliberately NOT a Terraform variable, so it is not here.)
+# (AWS credentials are deliberately NOT Terraform variables, so they are not here.)
 *.tfstate
 *.tfstate.*
 *.tfstate.backup
@@ -18,7 +18,7 @@ crash.*.log
 secrets/
 *.pem
 *.key
-cloudflare.ini
+aws.credentials
 
 # Generated client profiles embed your hostname
 *.mobileconfig

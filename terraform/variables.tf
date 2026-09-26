@@ -96,7 +96,7 @@ variable "ssh_public_key_path" {
 }
 
 # ---------------------------------------------------------------------------
-# TLS / ACME (DNS-01 via Cloudflare)
+# TLS / ACME (DNS-01 via AWS Route 53)
 # ---------------------------------------------------------------------------
 
 variable "acme_email" {
@@ -109,12 +109,13 @@ variable "acme_email" {
   }
 }
 
-# NOTE: the Cloudflare API token is deliberately NOT a Terraform variable.
+# NOTE: the AWS credentials are deliberately NOT Terraform variables.
 # A sensitive variable is still written to tfstate in plaintext, and anything
 # placed in user_data can be read back out of the Hetzner Cloud API for the
-# lifetime of the server. `make deploy` reads CLOUDFLARE_API_TOKEN from your
-# environment and installs it over SSH as /etc/letsencrypt/cloudflare.ini (0600),
-# so it touches neither state nor Hetzner's metadata store.
+# lifetime of the server. `make deploy` reads AWS_ACCESS_KEY_ID and
+# AWS_SECRET_ACCESS_KEY from your environment and installs them over SSH as
+# /etc/letsencrypt/aws.credentials (0600), so they touch neither state nor
+# Hetzner's metadata store.
 
 variable "acme_staging" {
   description = "Use the Let's Encrypt staging CA. Set true while iterating to avoid burning production rate limits; the cert will not be publicly trusted."

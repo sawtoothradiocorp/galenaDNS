@@ -133,7 +133,7 @@ apt-get install -y -qq --no-install-recommends \
   unbound \
   dns-root-data \
   certbot \
-  python3-certbot-dns-cloudflare \
+  python3-certbot-dns-route53 \
   nftables \
   gettext-base \
   knot-dnsutils \
@@ -314,14 +314,27 @@ ok "refresh timer enabled (every ${GALENA_RPZ_UPDATE_INTERVAL:-8h})"
 # --------------------------------------------------------------------------
 # TLS
 # --------------------------------------------------------------------------
-step "Obtaining TLS certificate (ACME DNS-01 via Cloudflare)"
+step "Obtaining TLS certificate (ACME DNS-01 via Route 53)"
 install -m 0755 "${REPO}/bin/acme-deploy-hook.sh" /usr/local/sbin/galena-acme-deploy
 
-[[ -s /etc/letsencrypt/cloudflare.ini ]] \
-  || die "/etc/letsencrypt/cloudflare.ini missing — 'make deploy' installs it from \$CLOUDFLARE_API_TOKEN"
-chmod 0600 /etc/letsencrypt/cloudflare.ini
-grep -q 'dns_cloudflare_api_token' /etc/letsencrypt/cloudflare.ini \
-  || die "cloudflare.ini must use dns_cloudflare_api_token (certbot 4.x removed global-key auth)"
+AWS_CREDS=/etc/letsencrypt/aws.credentials
+[[ -s $AWS_CREDS ]] \
+  || die "${AWS_CREDS} missing — 'make deploy' installs it from \$AWS_ACCESS_KEY_ID / \$AWS_SECRET_ACCESS_KEY"
+chmod 0600 "$AWS_CREDS"
+grep -q 'aws_access_key_id' "$AWS_CREDS" \
+  || die "${AWS_CREDS} has no aws_access_key_id"
+
+# Renewal runs from certbot.timer with a clean environment and the plugin has no
+# --credentials flag, so the drop-in is what keeps renewal working in 60 days.
+install -d -m 0755 /etc/systemd/system/certbot.service.d
+install -m 0644 "${REPO}/systemd/certbot.service.d/aws-credentials.conf" \
+  /etc/systemd/system/certbot.service.d/aws-credentials.conf
+systemctl daemon-reload
+
+# Same values for this first, interactive issuance.
+export AWS_SHARED_CREDENTIALS_FILE="$AWS_CREDS"
+export AWS_CONFIG_FILE="$AWS_CREDS"
+export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-us-east-1}"
 
 staging_arg=()
 [[ ${GALENA_ACME_STAGING:-0} == 1 ]] && staging_arg=(--staging)
@@ -329,17 +342,19 @@ staging_arg=()
 if [[ -s "/etc/letsencrypt/live/${GALENA_DOMAIN}/fullchain.pem" ]]; then
   ok "certificate already present; skipping issuance"
 else
+  # certbot-dns-route53 polls Route 53's GetChange until the record set is
+  # INSYNC, so there is no propagation-seconds flag to tune and none is needed.
   certbot certonly \
     --non-interactive --agree-tos --no-eff-email \
     --email "$GALENA_ACME_EMAIL" \
-    --dns-cloudflare \
-    --dns-cloudflare-credentials /etc/letsencrypt/cloudflare.ini \
-    --dns-cloudflare-propagation-seconds 30 \
+    --dns-route53 \
     --key-type ecdsa \
     -d "$GALENA_DOMAIN" \
     "${staging_arg[@]}" \
-    || die "certbot failed. Common causes: the API token lacks Zone:DNS:Edit on
-the zone holding ${GALENA_DOMAIN}, or the zone is not actually on Cloudflare."
+    || die "certbot failed. Common causes: the IAM key lacks
+route53:ChangeResourceRecordSets on the hosted zone containing ${GALENA_DOMAIN},
+route53:ListHostedZones or route53:GetChange on *, or ${GALENA_DOMAIN} is not in
+a Route 53 hosted zone at all."
   ok "certificate issued for ${GALENA_DOMAIN}"
 fi
 

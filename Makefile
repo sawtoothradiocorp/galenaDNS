@@ -25,7 +25,8 @@ help: ## Show this help
 	@echo
 	@echo "Required environment:"
 	@echo "  HCLOUD_TOKEN            Hetzner Cloud API token (read+write)   [plan/apply/destroy]"
-	@echo "  CLOUDFLARE_API_TOKEN    Zone:DNS:Edit on your zone             [deploy]"
+	@echo "  AWS_ACCESS_KEY_ID       IAM key for Route 53 DNS-01             [deploy]"
+	@echo "  AWS_SECRET_ACCESS_KEY   its secret                              [deploy]"
 
 # --------------------------------------------------------------------------
 # Safe targets
@@ -88,7 +89,8 @@ destroy: ## Destroy all infrastructure (PROMPTS TWICE — irreversible)
 # --------------------------------------------------------------------------
 
 deploy: ## Push node/ and run bootstrap.sh on every node
-	@: $${CLOUDFLARE_API_TOKEN:?must be set — Zone:DNS:Edit token for your zone}
+	@: $${AWS_ACCESS_KEY_ID:?must be set — IAM key with Route 53 access for ACME DNS-01}
+	@: $${AWS_SECRET_ACCESS_KEY:?must be set — secret for AWS_ACCESS_KEY_ID}
 	@ips=$$($(TF) output -json nodes | python3 -c 'import json,sys;[print(v["ipv4"]) for v in json.load(sys.stdin).values()]'); \
 	[ -n "$$ips" ] || { echo "No nodes. Run 'make apply' first."; exit 1; }; \
 	for ip in $$ips; do \
@@ -99,8 +101,9 @@ deploy: ## Push node/ and run bootstrap.sh on every node
 		echo "    syncing config"; \
 		rsync -az --delete -e "ssh $(SSH_OPT)" node/ "root@$$ip:$(REMOTE)/"; \
 		echo "    installing ACME credentials"; \
-		ssh $(SSH_OPT) "root@$$ip" 'install -d -m 0755 /etc/letsencrypt && umask 077 && cat > /etc/letsencrypt/cloudflare.ini' \
-			<<< "dns_cloudflare_api_token = $$CLOUDFLARE_API_TOKEN"; \
+		printf '[default]\naws_access_key_id = %s\naws_secret_access_key = %s\nregion = %s\n' \
+			"$$AWS_ACCESS_KEY_ID" "$$AWS_SECRET_ACCESS_KEY" "$${AWS_DEFAULT_REGION:-us-east-1}" \
+			| ssh $(SSH_OPT) "root@$$ip" 'install -d -m 0755 /etc/letsencrypt && umask 077 && cat > /etc/letsencrypt/aws.credentials'; \
 		echo "    running bootstrap"; \
 		ssh $(SSH_OPT) -t "root@$$ip" "bash $(REMOTE)/bootstrap.sh"; \
 	done

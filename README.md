@@ -33,7 +33,7 @@ third-party resolver anywhere in the configuration.
 | Requirement | Notes |
 |---|---|
 | Hetzner Cloud project | API token with read+write |
-| A domain on Cloudflare | Needed for ACME DNS-01. Any provider works if you swap the certbot plugin. |
+| A domain in AWS Route 53 | Needed for ACME DNS-01. Any provider works if you swap the certbot plugin. |
 | Terraform ≥ 1.9 | `brew install terraform` |
 | `kdig` | `brew install knot` — DoT, DoH and DoQ tests |
 | `dnslookup` | `brew install ameshkov/tap/dnslookup` — DoH3 tests |
@@ -42,14 +42,39 @@ third-party resolver anywhere in the configuration.
 Two environment variables, never files:
 
 ```sh
-export HCLOUD_TOKEN=...          # Hetzner Cloud, read+write
-export CLOUDFLARE_API_TOKEN=...  # Zone:DNS:Edit, scoped to your zone only
+export HCLOUD_TOKEN=...           # Hetzner Cloud, read+write
+export AWS_ACCESS_KEY_ID=...      # IAM key for Route 53 DNS-01
+export AWS_SECRET_ACCESS_KEY=...
 ```
 
-`CLOUDFLARE_API_TOKEN` is deliberately **not** a Terraform variable. A sensitive
-Terraform variable is still written to `tfstate` in plaintext, and anything placed
-in `user_data` can be read back out of the Hetzner API for the life of the server.
-`make deploy` installs it over SSH instead, so it reaches neither.
+These are deliberately **not** Terraform variables. A sensitive Terraform variable
+is still written to `tfstate` in plaintext, and anything placed in `user_data` can
+be read back out of the Hetzner API for the life of the server. `make deploy`
+installs them over SSH as `/etc/letsencrypt/aws.credentials` (0600) instead, so
+they reach neither.
+
+The IAM key needs exactly three actions. `ChangeResourceRecordSets` can be scoped
+to the one hosted zone, and optionally to TXT records only:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    { "Effect": "Allow",
+      "Action": ["route53:ListHostedZones", "route53:GetChange"],
+      "Resource": "*" },
+    { "Effect": "Allow",
+      "Action": "route53:ChangeResourceRecordSets",
+      "Resource": "arn:aws:route53:::hostedzone/YOUR_ZONE_ID",
+      "Condition": {
+        "ForAllValues:StringEquals": {
+          "route53:ChangeResourceRecordSetsRecordTypes": ["TXT"]
+        }
+      }
+    }
+  ]
+}
+```
 
 ## Deploy
 
@@ -67,11 +92,11 @@ Create the records it prints at your DNS provider — all nodes share one hostna
 and multiple A/AAAA records give you round-robin:
 
 ```
-dns.example.com.   A      203.0.113.4
-dns.example.com.   AAAA   2001:db8::4
+base.dns.swthrc.com.   A      <ipv4>
+base.dns.swthrc.com.   AAAA   <ipv6>
 ```
 
-Wait for them to resolve (`dig +short dns.example.com`), then:
+Wait for them to resolve (`dig +short base.dns.swthrc.com`), then:
 
 ```sh
 make deploy     # push config, issue the certificate, start everything
@@ -103,7 +128,7 @@ exactly why ACME here is DNS-01 and not HTTP-01 — see below.
 ## Client setup
 
 **Android 9+** — Settings ▸ Network & internet ▸ Private DNS ▸ Private DNS provider
-hostname ▸ `dns.example.com`. This is DoT.
+hostname ▸ `base.dns.swthrc.com`. This is DoT.
 
 **iOS / macOS** — `make mobileconfig` generates two unsigned profiles, DoH and
 DoT. AirDrop or email one to the device and install it:
@@ -117,16 +142,16 @@ the OS still validates your certificate on every query. Only one DNS profile can
 be active at a time, so installing one replaces the other.
 
 **Firefox** — Settings ▸ Privacy & Security ▸ DNS over HTTPS ▸ Max Protection ▸
-Custom ▸ `https://dns.example.com/dns-query`
+Custom ▸ `https://base.dns.swthrc.com/dns-query`
 
 **Chrome / Edge** — Settings ▸ Privacy and security ▸ Security ▸ Use secure DNS ▸
-With: Custom ▸ `https://dns.example.com/dns-query`
+With: Custom ▸ `https://base.dns.swthrc.com/dns-query`
 
 **Windows 11** — Settings ▸ Network & internet ▸ your adapter ▸ DNS server
 assignment ▸ Edit ▸ add the node's IP, then set DNS over HTTPS to your URL.
 
 **Routers / systemd-resolved** — point at the node IP with DoT and set the TLS
-hostname to `dns.example.com`.
+hostname to `base.dns.swthrc.com`.
 
 ## Blocking
 
@@ -264,13 +289,18 @@ dynamic blocks is Lua, the privacy-relevant functions are documented as Lua, and
 upstream advises against mixing the two forms.
 
 **Debian 13.** unbound 1.22.0 against Debian 12's 1.17.1, plus certbot 4.0.0 with
-an apt-installable Cloudflare plugin.
+an apt-installable Route 53 plugin (`python3-certbot-dns-route53` 4.0.0-1).
 
 **ACME DNS-01, not HTTP-01.** With two or more nodes behind round-robin A records
 for one hostname, Let's Encrypt connects to *one* address and validation fails on
 the others. DNS-01 is node-count independent and needs no inbound port 80 at all,
 so no HTTP server ever runs and there are no access logs. The cost is a scoped
-Cloudflare token on each node.
+IAM key on each node.
+
+`certbot-dns-route53` has no `--credentials` flag and takes its key from the
+environment, so renewal — which runs from `certbot.timer` with a clean
+environment — needs `node/systemd/certbot.service.d/aws-credentials.conf`.
+Without that drop-in renewal fails silently about 60 days in.
 
 **The deploy hook is load-bearing.** dnsdist does not watch certificate files on
 disk. Without `reloadAllCertificates()` after renewal it keeps serving the old
@@ -320,7 +350,7 @@ node/               rsynced to /opt/galena, installed by bootstrap.sh
   unbound/          unbound.conf + the allowlist RPZ zone
   dnsdist/          dnsdist Lua config
   nftables/         host firewall
-  systemd/          journald privacy, RPZ timer, service hardening
+  systemd/          journald privacy, RPZ timer, service hardening, certbot AWS env
   bin/              rpz-update.sh, acme-deploy-hook.sh, privacy-audit.sh
 scripts/            run from your machine: test-resolver.sh, make-mobileconfig.sh
 ```
@@ -339,7 +369,8 @@ scripts/            run from your machine: test-resolver.sh, make-mobileconfig.s
 
 | Symptom | Likely cause |
 |---|---|
-| `certbot` fails during deploy | Token lacks Zone:DNS:Edit on that zone, or the zone is not on Cloudflare |
+| `certbot` fails during deploy | IAM key lacks `route53:ChangeResourceRecordSets` on the zone, or the name is not in a Route 53 hosted zone |
+| Renewal fails ~60 days later | The certbot systemd drop-in is missing; check `systemctl cat certbot.service` |
 | `bootstrap.sh` aborts on QUIC support | apt resolved dnsdist from Debian — check `apt-cache policy dnsdist` |
 | DoT/DoH work, DoQ/DoH3 hang for some users | ICMP being dropped upstream of the node, breaking path MTU discovery |
 | Everything resolves but nothing is blocked | Check `make audit` section 4; a feed may have failed validation |

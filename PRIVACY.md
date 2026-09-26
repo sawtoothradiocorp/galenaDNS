@@ -59,7 +59,7 @@ A privacy document that claims a clean sheet is not credible. These files exist:
 - **`/var/log/unattended-upgrades/`** — package names and versions installed.
 - **`/var/lib/unbound/rpz/*.rpz`** — the blocklists themselves. These are lists we
   downloaded, not records of anything anyone asked for.
-- **`/etc/letsencrypt/cloudflare.ini`** — the DNS API token, mode 0600.
+- **`/etc/letsencrypt/aws.credentials`** — the Route 53 IAM key, mode 0600.
 
 `make audit` reports each of these explicitly rather than staying quiet about them.
 
@@ -102,8 +102,9 @@ Two consequences worth knowing:
   address and the name being resolved — never yours. `qname-minimisation: yes`
   sends each of them only the labels it needs. No third-party resolver is used at
   any point: there is no forwarding configured anywhere.
-- **Cloudflare holds the DNS zone** for the resolver's hostname, because ACME
-  DNS-01 validation is done there.
+- **AWS Route 53 holds the DNS zone** for the resolver's hostname, because ACME
+  DNS-01 validation is done there. AWS therefore sees the zone's contents and the
+  short-lived `_acme-challenge` TXT records, but no client query ever reaches it.
 - **Legal compulsion.** Server operators can be ordered to start logging. What
   this design gives you is that there is nothing retained to hand over about the
   past. It cannot promise anything about the future.
