@@ -292,10 +292,14 @@ section "6. Outbound connections"
 # ===========================================================================
 # A remote logging sink would show up here as an established connection to
 # something that is not DNS, ACME or the blocklist CDN.
+# Exclude the admin CIDR: the SSH session running this audit would otherwise
+# always appear here, training the reader to ignore the check.
+admin_ip=${GALENA_ADMIN_CIDR%%/*}
 unexpected=$(ss -tupnH state established 2>/dev/null \
   | awk '{print $5, $6}' \
   | grep -vE ':(53|443|853|80)\b' \
-  | grep -vE '127\.0\.0\.1|\[::1\]' || true)
+  | grep -vE '127\.0\.0\.1|\[::1\]' \
+  | grep -vF "${admin_ip:-__no_admin_ip__}" || true)
 if [[ -n $unexpected ]]; then
   warn "no unexpected outbound connections" "review these:"
   sed 's/^/       /' <<< "$unexpected"
@@ -307,7 +311,9 @@ fi
 section "7. Scheduled jobs"
 # ===========================================================================
 crons=$(find /etc/cron.d /etc/cron.daily /etc/cron.hourly /etc/cron.weekly /etc/cron.monthly \
-  -type f 2>/dev/null | grep -vE '/(e2scrub_all|dpkg|man-db|apt-compat|logrotate|plocate|certbot)$' || true)
+  -type f 2>/dev/null \
+  | grep -vE '/(e2scrub_all|dpkg|man-db|apt-compat|logrotate|plocate|certbot)$' \
+  | grep -vE '/\.placeholder$' || true)
 if [[ -n $crons ]]; then
   warn "no unexpected cron jobs" "review these:"
   sed 's/^/       /' <<< "$crons"

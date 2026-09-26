@@ -377,8 +377,30 @@ export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-us-east-1}"
 staging_arg=()
 [[ ${GALENA_ACME_STAGING:-0} == 1 ]] && staging_arg=(--staging)
 
-if [[ -s "/etc/letsencrypt/live/${GALENA_DOMAIN}/fullchain.pem" ]]; then
-  ok "certificate already present; skipping issuance"
+LIVE_CERT="/etc/letsencrypt/live/${GALENA_DOMAIN}/fullchain.pem"
+want_staging=${GALENA_ACME_STAGING:-0}
+
+# A certificate already being present is not sufficient: it also has to come from
+# the CA we now want. Without this, the documented "flip acme_staging to false and
+# re-deploy" would skip issuance and serve the untrusted staging certificate
+# forever. Let's Encrypt's staging intermediate carries STAGING in its issuer.
+if [[ -s $LIVE_CERT ]]; then
+  if openssl x509 -in "$LIVE_CERT" -noout -issuer 2>/dev/null | grep -qi staging; then
+    have_staging=1
+  else
+    have_staging=0
+  fi
+  if [[ $have_staging != "$want_staging" ]]; then
+    warn "existing certificate is from the $([[ $have_staging == 1 ]] && echo staging || echo production) CA but acme_staging=${want_staging}"
+    warn "removing it so the correct CA issues a replacement"
+    # dnsdist keeps serving its own copy in /etc/dnsdist/tls meanwhile, so there
+    # is no gap in service between the delete and the new issuance.
+    certbot delete --cert-name "$GALENA_DOMAIN" --non-interactive || true
+  fi
+fi
+
+if [[ -s $LIVE_CERT ]]; then
+  ok "certificate already present from the requested CA; skipping issuance"
 else
   # certbot-dns-route53 polls Route 53's GetChange until the record set is
   # INSYNC, so there is no propagation-seconds flag to tune and none is needed.
