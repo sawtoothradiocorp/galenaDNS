@@ -109,7 +109,7 @@ deploy: ## Push node/ and run bootstrap.sh on every node
 		echo "    waiting for cloud-init"; \
 		ready=0; \
 		for _ in $$(seq 1 60); do \
-			if ssh $(SSH_OPT) "root@$$ip" 'test -f $(REMOTE)/.cloud-init-complete' 2>/dev/null; then ready=1; break; fi; \
+			if ssh $(SSH_OPT) "root@$$ip" 'cloud-init status 2>/dev/null | grep -qE "status: (done|disabled)"' 2>/dev/null; then ready=1; break; fi; \
 			sleep 10; \
 		done; \
 		[ "$$ready" = 1 ] || { echo "    cloud-init did not finish in 10m"; exit 1; }; \
