@@ -480,8 +480,10 @@ with fewer than `min_entries` records.
 5. **dnsdist** — config is free of every logging and remote-logging directive;
    `setSecurityPollSuffix("")` present so there is no version phone-home;
    responses not recorded; webserver state matches the variable.
-6. **Outbound connections** — flags anything established to a port that is not
-   DNS, ACME or the blocklist CDN, which is what a remote log sink would look like.
+6. **Outbound connections** — flags anything established *from* this host to a port
+   that is not DNS, ACME or the blocklist CDN, which is what a remote log sink would
+   look like. Inbound and outbound are told apart by the local port, so clients on
+   443/853 and the DNS health checkers probing 853 are not mistaken for egress.
 7. **Scheduled jobs** — unexpected cron entries and the active timer list.
 8. **Host resolver** — `/etc/resolv.conf` points only at `127.0.0.1`, so the
    server's own lookups do not reach a third-party resolver, and is immutable.

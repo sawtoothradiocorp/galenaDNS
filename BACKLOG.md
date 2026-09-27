@@ -178,16 +178,20 @@ Not code. All of it blocks "lightly advertised", none of it blocks personal use.
 - **Rate limiting has never been tested for real.** `make test ARGS=--include-ratelimit`
   reports a false pass from mtbaldy because `rate_limit_exempt_cidrs` defaults to
   `admin_cidr`. Needs one run from another network.
-- **Failover is half-verified.** Withdrawal is proven: `hel1-a` was created before it
-  was deployed, its health checks read 0/16 healthy, and Route 53 dropped its address
-  from the record set on its own. Re-admission is proven by the same episode in
-  reverse once `make deploy` brings it up. What is *not* tested is the part clients
-  actually experience — killing a node with live DoT and DoH connections on it and
-  measuring how each platform behaves through the ~150s window. Android is the one to
-  watch: it surfaces "Private DNS server cannot be accessed" and its retry behaviour
-  is its own, not DNS's. `hcloud server poweroff galena-dns-hel1-a` is the test; the
-  reason it has not been run is that it needs a client pinned to that specific node,
-  which round-robin makes awkward to arrange deliberately.
+- **Failover is verified in the mechanism, not in the client.** Both directions were
+  observed for real during the deploy that introduced it: `hel1-a` existed before it
+  was deployed, so its checks read 0/16 healthy and Route 53 dropped its address from
+  the record set on its own; once dnsdist started, all four checks went 16/16 and both
+  addresses came back, in varying order, from Google, Cloudflare and Quad9. Nothing
+  was simulated.
+
+  What is *not* tested is the part clients actually experience — killing a node with
+  live DoT and DoH connections on it and measuring how each platform behaves through
+  the ~150s window. Android is the one to watch: it surfaces "Private DNS server
+  cannot be accessed" and its retry behaviour is its own, not DNS's.
+  `hcloud server poweroff galena-dns-hel1-a` is the test. The reason it has not been
+  run is that it needs a client pinned to that specific node, which round-robin makes
+  awkward to arrange deliberately.
 - **`make test` does not assert the record shape.** It tests each node by address, so
   it would pass identically if the health checks were detached, the routing policy
   reverted to a plain multi-value set, or a node were missing from DNS entirely — the

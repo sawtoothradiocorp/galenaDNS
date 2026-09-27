@@ -446,12 +446,32 @@ section "6. Outbound connections"
 # something that is not DNS, ACME or the blocklist CDN.
 # Exclude the admin CIDR: the SSH session running this audit would otherwise
 # always appear here, training the reader to ignore the check.
+# Inbound and outbound connections both appear in `ss state established`, and they
+# have to be told apart by the LOCAL port, not the peer's.
+#
+# This filtered on the peer port alone, which reported every CLIENT connection as an
+# unexpected outbound one: an inbound DoT connection is local=:853 with an ephemeral
+# peer port, so it matched nothing in the exclusion list. The check therefore only
+# passed while the admin was the resolver's only user — the first real client to
+# connect produced a WARN naming them. Route 53 health checkers now connect to 853
+# every 30 seconds as well, so it would have warned permanently, which is precisely
+# the "train the reader to ignore this check" failure the note below warns about.
 admin_ip=${GALENA_ADMIN_CIDR%%/*}
 unexpected=$(ss -tupnH state established 2>/dev/null \
-  | awk '{print $5, $6}' \
-  | grep -vE ':(53|443|853|80)\b' \
-  | grep -vE '127\.0\.0\.1|\[::1\]' \
-  | grep -vF "${admin_ip:-__no_admin_ip__}" || true)
+  | awk -v admin="${admin_ip:-__no_admin_ip__}" '
+      function port(a) { sub(/.*:/, "", a); return a }
+      {
+        local = $4; peer = $5; proc = $6
+        # Either end on loopback is dnsdist talking to unbound.
+        if (local ~ /^(127\.0\.0\.1|\[::1\]):/ || peer ~ /^(127\.0\.0\.1|\[::1\]):/) next
+        # INBOUND to a port we deliberately publish: clients on DoH and DoT, the
+        # health checkers probing 853, and the SSH session running this audit.
+        if (port(local) ~ /^(443|853|22)$/) next
+        # OUTBOUND to DNS, ACME or the blocklist CDN.
+        if (port(peer) ~ /^(53|443|853|80)$/) next
+        if (admin != "__no_admin_ip__" && index(peer, admin)) next
+        print peer, proc
+      }' || true)
 if [[ -n $unexpected ]]; then
   warn "no unexpected outbound connections" "review these:"
   sed 's/^/       /' <<< "$unexpected"

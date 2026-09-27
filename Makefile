@@ -165,12 +165,27 @@ deploy: ## Push node/ and run bootstrap.sh on every node
 	@echo
 	@echo "Deployed. Next: make audit && make test"
 
-audit: ## Run the privacy audit on every node
-	@$(TF) output -json nodes | python3 -c 'import json,sys;[print(v["ipv4"]) for v in json.load(sys.stdin).values()]' \
-	| while read -r ip; do \
-		echo "==> $$ip"; \
-		ssh $(SSH_OPT) "root@$$ip" "bash $(REMOTE)/bin/privacy-audit.sh"; \
-	done
+audit: ## Run the privacy audit on EVERY node
+	@# `for` over a command substitution, and `ssh -n`, for two separate reasons —
+	@# this target had both bugs and reported a clean pass with both of them.
+	@#
+	@# ssh reads its own stdin. Inside `... | while read -r ip`, that stdin IS the
+	@# pipe carrying the remaining addresses, so the first ssh swallowed the rest
+	@# and only ONE node was ever audited. Silently, with exit 0. `ssh -n` points
+	@# its stdin at /dev/null; the `for` removes the shared pipe entirely.
+	@#
+	@# A piped `while` also runs in a subshell, so rc=1 set inside it was lost and
+	@# a node that FAILED its audit still exited 0. Same trap as `test` below,
+	@# which was written to avoid it while this one was not.
+	@nodes=$$($(TF) output -json nodes | python3 -c 'import json,sys;[print(k+","+v["ipv4"]) for k,v in json.load(sys.stdin).items()]'); \
+	[ -n "$$nodes" ] || { echo "No nodes. Run 'make apply' first."; exit 1; }; \
+	rc=0; \
+	for entry in $$nodes; do \
+		name=$${entry%%,*}; ip=$${entry#*,}; \
+		echo; echo "==> $$name ($$ip)"; \
+		ssh -n $(SSH_OPT) "root@$$ip" "bash $(REMOTE)/bin/privacy-audit.sh" || rc=1; \
+	done; \
+	[ $$rc -eq 0 ] || { echo; echo "At least one node FAILED the audit."; exit 1; }
 
 test: ## Test EVERY node from this machine (ARGS="--include-ratelimit" for the rate-limit test)
 	@# One node at a time, by address. Testing the hostname alone would exercise
