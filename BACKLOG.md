@@ -146,6 +146,15 @@ outside Europe.
 
 Not code. All of it blocks "lightly advertised", none of it blocks personal use.
 
+- **Stable addresses before telling anyone to type one in.** Windows, routers and
+  systemd-resolved are configured by IP, and each node's address currently dies
+  with its server, so replacing a node silently breaks every such client. Drafted
+  and plan-verified on the `primary-ips` branch: it imports the four existing
+  Primary IPs with `auto_delete = false` and `delete_protection = true`. No address
+  change, no downtime, no added cost. Read that commit before applying — the
+  obvious version of the change deletes both nodes' addresses, and the plan does
+  not show it. Hostname-configured clients (Android, the iOS/macOS profiles,
+  browsers) don't need this.
 - **`max_qps_per_ip = 40` will break NATed groups.** Fine for a household. A
   university, an office or a CGNAT range is thousands of users behind one address,
   and 40 qps will drop their traffic. Raising it weakens the only abuse control
