@@ -1,0 +1,14 @@
+[Unit]
+Description=galena-dns: probe every 5 minutes
+
+[Timer]
+OnBootSec=2min
+# Must stay well inside the heartbeat alarm in terraform/monitoring.tf, which
+# fires after four empty five-minute periods. A slower cadence here would make
+# that alarm fire on a healthy monitor.
+OnUnitActiveSec=5min
+AccuracySec=30s
+Unit=galena-probe.service
+
+[Install]
+WantedBy=timers.target

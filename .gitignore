@@ -33,3 +33,6 @@ aws.credentials
 .env
 *.local
 scratch/
+
+# Python bytecode from make check / local runs of monitor/galena-probe
+__pycache__/

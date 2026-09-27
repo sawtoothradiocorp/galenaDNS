@@ -1,0 +1,40 @@
+# galena-dns external prober. Installed by monitor/install.sh on the monitor
+# host — never on a resolver node, which cannot report itself down.
+[Unit]
+Description=galena-dns: probe every resolver node from outside
+Documentation=file:///usr/local/lib/galena-probe/galena-probe
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=galena-probe
+Group=galena-probe
+EnvironmentFile=/etc/galena-probe/probe.env
+# boto3 reads the key from here. The file is root:galena-probe 0640, written by
+# install.sh from what `make monitor-key` shipped, and never enters Terraform.
+Environment=AWS_SHARED_CREDENTIALS_FILE=/etc/galena-probe/aws.credentials
+Environment=AWS_CONFIG_FILE=/dev/null
+ExecStart=/usr/local/lib/galena-probe/galena-probe
+# Worst case is every check timing out and retrying: 7 checks per node, two
+# attempts, 20s ceiling plus a 3s pause each — about 11 minutes for two nodes.
+# A healthy run takes ~15 seconds.
+TimeoutStartSec=15min
+
+# State survives reboots so an ongoing failure is not re-announced as new.
+StateDirectory=galena-probe
+StateDirectoryMode=0700
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+CapabilityBoundingSet=

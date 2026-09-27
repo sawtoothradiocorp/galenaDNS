@@ -140,15 +140,18 @@ q_doq() {
   kdig "${ta[@]}" +quic +timeout=6 +retry=1 "@${TARGET}" "$1" "${2:-A}" 2>&1
 }
 q_doh3() {
-  # dnslookup takes a URL, so it resolves the host itself rather than accepting
-  # a separate target. In insecure mode aim it at $TARGET — which may be the IP —
-  # so the test does not depend on the control machine's own DNS being able to
-  # resolve the name. In verifying mode the hostname is required, because that is
-  # what the certificate is issued for.
+  # dnslookup takes a URL and resolves its host itself, so the hostname URL alone
+  # would test whichever node DNS returned — not $TARGET. That was a real bug:
+  # `make test` checked DoH3 on a random node per run while reporting it against
+  # the one named. A trailing IP pins the connection to the node while the URL's
+  # hostname still drives SNI and certificate verification; pinning to a
+  # blackhole address was checked to fail, so the pin is real.
+  local pin=()
+  [[ -n $IP ]] && pin=("$IP")
   if ((INSECURE)); then
-    VERIFY=0 dnslookup "$1" "h3://${TARGET}${DOH_PATH}" 2>&1
+    VERIFY=0 dnslookup "$1" "h3://${DOMAIN}${DOH_PATH}" "${pin[@]}" 2>&1
   else
-    dnslookup "$1" "h3://${DOMAIN}${DOH_PATH}" 2>&1
+    dnslookup "$1" "h3://${DOMAIN}${DOH_PATH}" "${pin[@]}" 2>&1
   fi
 }
 
@@ -368,8 +371,25 @@ else
   probe_ip=$(dig +short "$DOMAIN" A 2>/dev/null | head -1)
 fi
 
+# Interception control. Many networks and VPNs transparently redirect ALL
+# outbound port-53 traffic to their own resolver, so every address "answers" —
+# and this check would FAIL with "open resolver" against a node whose port 53 is
+# shut. That happened on 2026-09-27 from a VPN exit, and cost a scare. 192.0.2.1
+# is TEST-NET-1 (RFC 5737): nothing serves DNS there, so an answer from it can
+# only have come from the network in between.
+intercepted=0
+if dig @192.0.2.1 +timeout=3 +tries=1 "$CONTROL" A 2>/dev/null | grep -q 'status: NOERROR'; then
+  intercepted=1
+fi
+
 if [[ -z $probe_ip ]]; then
   skip "port 53 is closed" "could not determine an address to probe"
+elif ((intercepted)); then
+  skip "port 53 is closed" "this network intercepts port 53 — 192.0.2.1, which serves no DNS, answered"
+  printf '       %sAny port-53 result from here describes your network, not %s.
+' "$D" "$probe_ip"
+  printf '       Re-run from a network that does not rewrite DNS.%s
+' "$N"
 else
   closed=1
   for extra in "" "+tcp"; do

@@ -285,6 +285,81 @@ rejects the create, the old record survives and the apply is safe to re-run. Dur
 the switch the name has no A/AAAA for under a minute — resolvers holding a cached
 answer are unaffected, fresh lookups fail.
 
+## Monitoring
+
+Failover protects clients and hides the outage from you: a dead node is withdrawn,
+everyone moves to the survivor, and nothing says a node died. Monitoring is what
+turns the same signals into an email, all through one SNS topic to `alert_email`.
+
+| Alert | Fires when | Source |
+|---|---|---|
+| `<node>-v4-dot-down`, `<node>-v6-dot-down` | a node's address stops accepting DoT and Route 53 withdraws it | CloudWatch alarm on each health check, `terraform/monitoring.tf` |
+| prober findings | a transport fails, DNSSEC stops validating, blocking stops, or a certificate is invalid or has under 21 days left (under 7 is a FAIL) | `monitor/galena-probe` on `monitor_host` |
+| `probe-silent` | no passing probe run for 20 minutes | CloudWatch alarm on the prober's heartbeat metric |
+
+**The prober** runs every 5 minutes on `monitor_host` — mtbaldy — which is off-node,
+always on, and already `admin_cidr`. It checks every node **by address**, never
+through the hostname, because Route 53 withholds an unhealthy node from DNS and a
+hostname-based check would quietly stop looking at it. Per node: DoT and DoH with
+`dig`, DoQ with `kdig`, DoH3 with `dnslookup` pinned to the node's IP, DNSSEC in both
+directions, a blocked ad domain, and the certificate on both TLS listeners. Every
+TLS check verifies the certificate against the hostname; each tool was checked
+against a wrong hostname to prove verification was really on.
+
+It emails **on change**, not every run: once when a check starts failing, once when it
+recovers, and a reminder every 24 hours while something stays broken. State lives in
+`/var/lib/galena-probe` on the monitor host, so a reboot does not re-announce an old
+failure as new.
+
+**The dead man's switch.** After every run with no FAIL, the prober publishes one
+datapoint to CloudWatch; `probe-silent` fires after 20 minutes without one. That one
+alarm covers "the resolver is failing" *and* "the prober, its timer or its host is
+dead" — the second being the failure no monitor can report about itself. AWS
+evaluates it, so it does not depend on mtbaldy being alive.
+
+**The prober's key** can publish to that one topic and write that one metric
+namespace, and nothing else — no Route 53 at all. Terraform creates the IAM user but
+not the key, because an `aws_iam_access_key` stores its secret in state; `make
+monitor-key` mints it and pipes it straight to the monitor host.
+
+### Installing it
+
+```sh
+# 1. terraform.tfvars: alert_email = "...", monitor_host = "<ssh destination>"
+make apply             # topic, subscription, 5 alarms, IAM user
+                       # -> click the confirmation link AWS emails you
+make monitor-key       # key: AWS -> pipe -> monitor host, never on this machine
+make monitor-deploy    # rendered config + monitor/ to ~/galena-probe on the host
+ssh -t <monitor_host> 'sudo bash galena-probe/install.sh'
+```
+
+`install.sh` installs `knot-dnsutils` and `python3-boto3`, a pinned `dnslookup`
+release checked against its published SHA-256, a `galena-probe` system user, the key
+(then shreds the copy it was shipped as), and the timer. With a new key it sends a
+**test alert** and runs the prober once, so the whole path is proven on the spot.
+
+Expect `probe-silent` to go into ALARM about 20 minutes after `make apply` and clear
+itself once the prober is installed: until then there is no heartbeat, which is
+exactly what it reports.
+
+### Operating it
+
+```sh
+make monitor-check                                  # run once on the host, print only
+ssh <monitor_host> journalctl -u galena-probe -n 50 # recent runs
+```
+
+Rotating the key: `make monitor-key`, re-run `install.sh`, then delete the old key
+(`make monitor-key` prints the command). IAM allows two keys per user, which is what
+makes that overlap possible.
+
+**What it does not cover.** Blocklist freshness — a feed that stopped updating still
+blocks yesterday's list, and checking it needs node access the prober does not have.
+IPv6 end to end: mtbaldy has no IPv6 route, so the prober checks IPv4 only, and IPv6
+is covered by the Route 53 v6 health checks, which prove TCP and nothing more. And
+there is one vantage point: a failure that only affects some networks — UDP/QUIC
+through home NAT is the classic — is invisible from a datacenter. See BACKLOG.md.
+
 ## Client setup
 
 Clients split into two kinds, and only the first gets failover from DNS:
@@ -558,7 +633,10 @@ make test ARGS=--include-ratelimit    # will dynblock your own address
 ```
 
 It tests every node separately, by address — testing the hostname would exercise
-whichever node DNS returned and skip the rest. On each it checks all four
+whichever node DNS returned and skip the rest. That includes DoH3: `dnslookup`
+resolves the URL's host itself, so it is pinned to the node's IP with a trailing
+argument. Until 2026-09-27 it was not, and DoH3 was checked on whichever node DNS
+happened to return. On each it checks all four
 transports, DNSSEC (a bogus signature must SERVFAIL and a good
 one must set the AD bit), a known ad domain, malware domains **sampled live from
 the deployed feeds**, the allowlist, and that port 53 is closed.
@@ -571,6 +649,13 @@ Two honest caveats the output states for itself:
 
 - **Port 53 closed is a weak pass.** Many networks block outbound 53, so a timeout
   may be your network rather than the server. Re-run from a second network.
+- **Port 53 is SKIPped on networks that intercept DNS.** Many networks and VPNs
+  redirect all outbound port-53 traffic to their own resolver, which makes every
+  address — including a node with port 53 shut — look like an open resolver. The
+  test first queries `192.0.2.1`, a reserved address that serves no DNS; if that
+  "answers", the network is rewriting DNS and the port-53 result is meaningless.
+  This caught a false "open resolver" FAIL from a VPN exit on 2026-09-27; the same
+  check from mtbaldy passed.
 - **Neither `kdig` nor `dig` can speak DoH3.** kdig's `+https` is libnghttp2,
   which is HTTP/2 only; `dig` has no QUIC transport at all. Hence `dnslookup`.
   If it is missing, the DoH3 test SKIPs loudly instead of passing quietly.
@@ -720,6 +805,7 @@ terraform/          infrastructure
   primary_ips.tf    their addresses, kept independent of the servers
   firewall.tf       Hetzner Cloud Firewall, mirrored by nftables on the node
   dns.tf            Route 53 records and the health checks that drive failover
+  monitoring.tf     alert topic, CloudWatch alarms, the prober's IAM user
   rdns.tf           PTR records at Hetzner for each node's addresses
   outputs.tf        addresses, records, failover status, the cost estimate
   templates/        cloud-init (minimal: base packages, SSH, volatile logging)
@@ -731,6 +817,8 @@ node/               rsynced to /opt/galena, installed by bootstrap.sh
   systemd/          journald privacy, RPZ timer, service hardening, certbot AWS env
   bin/              rpz-update.sh, acme-deploy-hook.sh, privacy-audit.sh
 scripts/            run from your machine: test-resolver.sh, make-mobileconfig.sh
+monitor/            the external prober, its systemd units and installer, for
+                    the monitor host — never a node
 ```
 
 ## Pinned versions
@@ -789,7 +877,8 @@ Hetzner figures verified against the account's own `/v1/pricing` on 2026-09-27.
 | one node | $7.09 |
 | two nodes | $14.18 |
 | Route 53 health check, per node per address family | $0.75 |
-| **two nodes with failover, as deployed** | **$17.18** |
+| CloudWatch alarms (5) and heartbeat metric (1), SNS email | $0.00 — inside the always-free tier |
+| **two nodes with failover and alerting, as deployed** | **$17.18** |
 
 Traffic is 20 TB included per node, which DNS will not come close to using.
 
@@ -807,6 +896,12 @@ handful of clients generate thousands of queries a month, not millions. AWS pric
 are list prices from <https://aws.amazon.com/route53/pricing/>, read on 2026-09-27 —
 unlike the Hetzner ones they are not read back from the account.
 
+CloudWatch's always-free tier is 10 alarms and 10 custom metrics per account; this
+uses 5 and 1, and the account had none of either on 2026-09-27. Beyond it an alarm
+is $0.10/month and a metric $0.30 (<https://aws.amazon.com/cloudwatch/pricing/>,
+2026-09-27), and the estimate `make apply` prints assumes nothing else in the
+account uses the free tier. SNS email is free under 1,000 notifications a month.
+
 **US locations are a different product line and cost far more.** None of the `cx*`
 types are offered in `ash` or `hil`; the cheapest 4 GB type there is `cpx21` at
 $37.49/month, over five times the EU price. So a node near US users is not the
@@ -823,9 +918,9 @@ curl -H "Authorization: Bearer $HCLOUD_TOKEN" https://api.hetzner.cloud/v1/prici
 ## Backlog
 
 Open work, and what each item blocks, is in [BACKLOG.md](BACKLOG.md). The short
-version: there is no availability monitoring at all. Nothing tells you the resolver
-is broken — health checks withdraw a dead node, but they do not tell you it died,
-and they cannot see a certificate about to expire.
+version: alerting now exists (see "Monitoring"); what is left before anyone else is
+pointed at this is mostly decisions rather than code — rate limits for NATed
+groups, abuse handling, and the legal and data-controller questions.
 
 ## License
 

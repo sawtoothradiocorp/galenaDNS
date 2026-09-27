@@ -15,7 +15,8 @@ REMOTE  := /opt/galena
 # Hetzner's API does not publish host keys, so first contact has to trust DNS and
 # the network. accept-new pins the key from then on; a later change will fail loudly.
 
-.PHONY: help init fmt check plan apply deploy test audit destroy mobileconfig ssh nodes tunnel
+.PHONY: help init fmt check plan apply deploy test audit destroy mobileconfig ssh nodes tunnel \
+	monitor-deploy monitor-key monitor-check
 
 help: ## Show this help
 	@echo "galena-dns"
@@ -39,9 +40,10 @@ init: ## terraform init
 fmt: ## Format Terraform and check shell scripts
 	@$(TF) fmt -recursive
 	@if command -v shellcheck >/dev/null; then \
-		shellcheck -S warning node/bin/*.sh node/bootstrap.sh scripts/*.sh && echo "shellcheck: clean"; \
+		shellcheck -S warning node/bin/*.sh node/bootstrap.sh scripts/*.sh monitor/install.sh && echo "shellcheck: clean"; \
 	else echo "shellcheck not installed (brew install shellcheck) — skipping"; fi
-	@for f in node/bin/*.sh node/bootstrap.sh scripts/*.sh; do bash -n "$$f"; done
+	@for f in node/bin/*.sh node/bootstrap.sh scripts/*.sh monitor/install.sh; do bash -n "$$f"; done
+	@python3 -m py_compile monitor/galena-probe && rm -rf monitor/__pycache__
 	@echo "bash -n: clean"
 
 check: ## Validate everything that can be checked without spending money
@@ -204,6 +206,58 @@ test: ## Test EVERY node from this machine (ARGS="--include-ratelimit" for the r
 		scripts/test-resolver.sh --domain "$$domain" --ip "$$ip" $$feeds $(ARGS) || rc=1; \
 	done; \
 	[ $$rc -eq 0 ] || { echo; echo "At least one node FAILED."; exit 1; }
+
+# --------------------------------------------------------------------------
+# Monitoring — the external prober (monitor/) on var.monitor_host
+# --------------------------------------------------------------------------
+# Needs alert_email set and applied: terraform/monitoring.tf creates the topic,
+# the alarms and the prober's IAM user that these targets hand out.
+
+MON = $(TF) output -json monitoring | python3 -c
+
+monitor-deploy: ## Render the prober's config and copy monitor/ to the monitor host
+	@host=$$($(MON) 'import json,sys;m=json.load(sys.stdin);print(m["monitor_host"] if m else "")'); \
+	[ -n "$$host" ] || { echo "Monitoring is off: set alert_email in terraform.tfvars and make apply."; exit 1; }; \
+	env=$$(mktemp); trap 'rm -f "$$env"' EXIT; \
+	{ \
+	  echo "# Rendered by 'make monitor-deploy' from Terraform outputs. Not secret."; \
+	  echo "GALENA_DOMAIN=$$($(TF) output -raw domain)"; \
+	  echo "GALENA_NODES=\"$$($(TF) output -json nodes | python3 -c 'import json,sys;print(" ".join(k+"="+v["ipv4"] for k,v in sorted(json.load(sys.stdin).items())))')\""; \
+	  $(MON) 'import json,sys;m=json.load(sys.stdin);print("GALENA_TOPIC_ARN="+m["topic_arn"]);print("GALENA_AWS_REGION="+m["region"]);print("GALENA_METRIC_NAMESPACE="+m["metric_namespace"]);print("GALENA_METRIC_NAME="+m["metric_name"])'; \
+	} > "$$env"; \
+	echo "==> $$host:galena-probe/"; \
+	ssh $(SSH_OPT) "$$host" 'mkdir -p galena-probe'; \
+	rsync -a monitor/galena-probe monitor/galena-probe.service monitor/galena-probe.timer monitor/install.sh "$$host:galena-probe/"; \
+	rsync -a "$$env" "$$host:galena-probe/probe.env"; \
+	echo; \
+	echo "Now, from a terminal of your own (sudo will ask for a password):"; \
+	echo "  ssh -t $$host 'sudo bash galena-probe/install.sh'"
+
+monitor-key: ## Mint the prober's AWS key and ship it straight to the monitor host
+	@# The secret goes from the AWS API into a pipe and out over SSH. It is never
+	@# assigned to a shell variable, echoed, or written on this machine — and it is
+	@# not an aws_iam_access_key in Terraform, because that stores it in state.
+	@host=$$($(MON) 'import json,sys;m=json.load(sys.stdin);print(m["monitor_host"] if m else "")'); \
+	[ -n "$$host" ] || { echo "Monitoring is off: set alert_email in terraform.tfvars and make apply."; exit 1; }; \
+	user=$$($(MON) 'import json,sys;print(json.load(sys.stdin)["probe_iam_user"])'); \
+	prof=$$($(MON) 'import json,sys;print(json.load(sys.stdin)["aws_profile"])'); \
+	pargs=$${prof:+--profile $$prof}; \
+	existing=$$(aws iam list-access-keys --user-name "$$user" $$pargs --query 'length(AccessKeyMetadata)' --output text); \
+	[ "$$existing" -lt 2 ] || { echo "$$user already has 2 keys (the IAM maximum). Delete the unused one first:"; \
+	  echo "  aws iam list-access-keys --user-name $$user $$pargs"; exit 1; }; \
+	aws iam create-access-key --user-name "$$user" $$pargs --output json \
+	  | python3 -c 'import json,sys;k=json.load(sys.stdin)["AccessKey"];sys.stdout.write("[default]\naws_access_key_id = %s\naws_secret_access_key = %s\n" % (k["AccessKeyId"],k["SecretAccessKey"]))' \
+	  | ssh $(SSH_OPT) "$$host" 'mkdir -p galena-probe && umask 077 && cat > galena-probe/aws.credentials' \
+	  || { echo "FAILED after the key may have been created. List and delete strays with:"; \
+	       echo "  aws iam list-access-keys --user-name $$user $$pargs"; exit 1; }; \
+	echo "New key for $$user is in $$host:galena-probe/aws.credentials (0600)."; \
+	[ "$$existing" -eq 0 ] || echo "The previous key still works. Once install.sh has run, delete it: aws iam list-access-keys --user-name $$user $$pargs"; \
+	echo "Install it with:  ssh -t $$host 'sudo bash galena-probe/install.sh'"
+
+monitor-check: ## Run the prober once on the monitor host, printing results only (no alerts)
+	@host=$$($(MON) 'import json,sys;m=json.load(sys.stdin);print(m["monitor_host"] if m else "")'); \
+	[ -n "$$host" ] || { echo "Monitoring is off."; exit 1; }; \
+	ssh $(SSH_OPT) "$$host" 'set -a; . /etc/galena-probe/probe.env; exec /usr/local/lib/galena-probe/galena-probe --dry-run'
 
 mobileconfig: ## Generate unsigned iOS/macOS DoH + DoT profiles
 	@domain=$$($(TF) output -raw domain); \

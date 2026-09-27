@@ -42,6 +42,12 @@ nodes = {
 # dns_health_check_interval = 30           # 10 costs $2.00/check more
 # dns_health_check_failure_threshold = 3
 
+# Alerting. Health-check failures, the external prober's findings, and the
+# prober going silent all email this address. Empty disables alerting. See
+# README "Monitoring" for the prober itself, which runs on monitor_host.
+# alert_email  = "alerts@example.com"
+# monitor_host = "monitor.example.com"      # an ssh destination, not a node
+
 # Leave true for the first run to avoid burning Let's Encrypt rate limits while
 # you shake out DNS-01. The cert will not be publicly trusted until you flip it.
 # acme_staging = true

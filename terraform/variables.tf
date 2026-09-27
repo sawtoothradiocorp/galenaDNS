@@ -154,6 +154,33 @@ variable "dns_health_check_failure_threshold" {
   }
 }
 
+# ---------------------------------------------------------------------------
+# Alerting
+# ---------------------------------------------------------------------------
+
+variable "alert_email" {
+  description = <<-EOT
+    Where alerts go: node health-check failures, the external prober's findings,
+    and the prober going silent. Empty disables monitoring.tf entirely.
+
+    AWS emails a confirmation link on first apply, and nothing is delivered until
+    it is clicked. See terraform/monitoring.tf.
+  EOT
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.alert_email == "" || can(regex("^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$", var.alert_email))
+    error_message = "alert_email must be an email address, or empty to disable alerting."
+  }
+}
+
+variable "monitor_host" {
+  description = "SSH destination of the always-on machine that runs the external prober (monitor/). It must not be a resolver node: a monitor on the node cannot report the node down. Used by the monitor-* Makefile targets and in alarm text."
+  type        = string
+  default     = "mtbaldy"
+}
+
 variable "aws_region" {
   description = "Region for the AWS provider. Route 53 is global, but the provider requires one."
   type        = string

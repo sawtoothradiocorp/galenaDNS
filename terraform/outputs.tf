@@ -134,17 +134,52 @@ locals {
   ])
 }
 
+# CloudWatch is priced as if nothing else in the account used the always-free
+# tier (10 standard alarms, 10 custom metrics): $0.10 per alarm and $0.30 per
+# metric beyond it, from https://aws.amazon.com/cloudwatch/pricing/ on
+# 2026-09-27. The account had no alarms or custom metrics then; if that changes,
+# this understates by up to $1.30/month. SNS email is free under 1,000 a month.
+locals {
+  cloudwatch_monthly = (
+    max(0, local.cloudwatch_alarm_count - 10) * 0.10 +
+    max(0, local.cloudwatch_metric_count - 10) * 0.30
+  )
+}
+
 output "estimated_monthly_cost" {
-  description = "List price for everything recurring: Hetzner nodes with their primary IPv4, plus Route 53 health checks. USD, excluding traffic overage."
+  description = "List price for everything recurring: Hetzner nodes with their primary IPv4, Route 53 health checks, and CloudWatch alerting. USD, excluding traffic overage."
   value = format(
-    "~USD %.2f/month — %.2f Hetzner (%d node(s), incl. $0.60/node primary IPv4)%s",
-    local.hetzner_monthly + local.health_check_monthly,
+    "~USD %.2f/month — %.2f Hetzner (%d node(s), incl. $0.60/node primary IPv4)%s%s",
+    local.hetzner_monthly + local.health_check_monthly + local.cloudwatch_monthly,
     local.hetzner_monthly,
     length(var.nodes),
     local.health_check_count > 0
     ? format(" + %.2f Route 53 (%d health check(s) at $%.2f)", local.health_check_monthly, local.health_check_count, local.health_check_unit_monthly)
     : " + 0.00 Route 53 (no health checks)",
+    local.monitoring_enabled
+    ? format(" + %.2f CloudWatch (%d alarms, %d metric; free tier is 10 of each)", local.cloudwatch_monthly, local.cloudwatch_alarm_count, local.cloudwatch_metric_count)
+    : "",
   )
+}
+
+# What the monitor-* Makefile targets need. None of it is secret: publishing to
+# the topic still requires the prober's own key, which never touches state.
+output "monitoring" {
+  description = "Alert topic, prober identity and heartbeat metric. null when alert_email is empty."
+  value = !local.monitoring_enabled ? null : {
+    topic_arn        = aws_sns_topic.alerts[0].arn
+    alert_email      = var.alert_email
+    probe_iam_user   = aws_iam_user.probe[0].name
+    monitor_host     = var.monitor_host
+    aws_profile      = var.aws_profile
+    region           = var.aws_region
+    metric_namespace = local.heartbeat_namespace
+    metric_name      = local.heartbeat_metric
+    alarms = concat(
+      [for a in aws_cloudwatch_metric_alarm.node_health : a.alarm_name],
+      [aws_cloudwatch_metric_alarm.probe_heartbeat[0].alarm_name],
+    )
+  }
 }
 
 output "domain" {

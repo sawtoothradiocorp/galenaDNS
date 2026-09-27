@@ -209,6 +209,13 @@ Two further consequences, which apply to blocking wherever it happens:
   No DNS query is sent, nothing about any client is involved, and the connections
   arrive at the node like any other: unlogged. Route 53 **query logging is not
   enabled** on the zone, so AWS is not recording who looks up the hostname either.
+
+  Monitoring adds two more things AWS sees, neither about any client: an alarm
+  state per health check, and one heartbeat datapoint every five minutes from the
+  external prober. The prober itself runs on a separate machine and queries only
+  fixed public test names (`example.com`, two DNSSEC test domains, one ad domain),
+  so its traffic is indistinguishable from anyone else's and carries nothing about
+  who uses the resolver.
 - **Legal compulsion.** Server operators can be ordered to start logging. What
   this design gives you is that there is nothing retained to hand over about the
   past. It cannot promise anything about the future.

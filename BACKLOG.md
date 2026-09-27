@@ -9,76 +9,36 @@ of it becomes required the moment anyone else is pointed at it.
 
 ---
 
-## 1. External availability monitoring
+## 1. External availability monitoring — built, pending install
 
-**Nothing currently tells you the resolver is broken.** There is no alerting of any
-kind. Today you would find out when a browser stops loading pages, and if you are
-not the one using it at the time, you would not find out at all.
+Until 2026-09-27 nothing told you the resolver was broken, and failover made that
+worse: a dead node is withdrawn, clients move to the survivor, and nothing anywhere
+says a node died. README "Monitoring" describes what exists now:
 
-"External" is load-bearing: a monitor running on the node cannot report that the
-node is down. It has to run somewhere else.
+- a CloudWatch alarm on each of the four Route 53 health checks;
+- `monitor/galena-probe` on mtbaldy every 5 minutes, per node by address: all four
+  transports, DNSSEC both ways, blocking, and the certificate on both listeners,
+  alerting under 21 days;
+- a heartbeat metric from every passing run, with an alarm when it stops — the
+  dead man's switch, evaluated by AWS so it survives mtbaldy dying.
 
-This does **not** conflict with the no-logging design. Probing your own endpoint
-produces no client data — it is your query about your own service. Nothing about
-anyone's browsing is involved, and `make audit` would still pass unchanged.
+Everything goes through one SNS topic to `alert_email`, and costs nothing inside
+CloudWatch's always-free tier. Healthchecks.io and the Airflow instance on
+dollarmtn were both considered for the dead man's switch; CloudWatch won because
+it needs no new host, no cross-host SSH key and no third party beyond the one
+already holding the zone.
 
-### What to watch, ordered by how quietly it fails
+**Done looks like:** `install.sh` has run, the test alert arrived, `probe-silent`
+has cleared, and deliberately breaking one check — stopping dnsdist on one node —
+produced a FAIL email, a withdrawn address, and a recovery email.
 
-| Check | Why it matters | How |
+### Still not covered
+
+| Gap | Why it matters | Shape of a fix |
 |---|---|---|
-| **Certificate days remaining** | The worst one. Renewal runs unattended via `certbot.timer`. If it fails — expired IAM key, Route 53 permission change, plugin breakage after an upgrade — nothing says so, and ~60 days later every client's TLS handshake fails at once. | `openssl s_client -connect base.dns.swthrc.com:853` and parse `notAfter`. Alert under ~21 days. |
-| **Does it answer, per transport** | DoH, DoH3, DoT and DoQ fail independently. dnsdist can be up with one listener broken. | `scripts/test-resolver.sh` already covers all four. It just needs to run on a schedule somewhere else. |
-| **Is DNSSEC still validating** | A validator that silently stopped is invisible: everything still resolves, just without protection. | Already in `test-resolver.sh` — bogus must SERVFAIL, good must set AD. |
-| **Upstream reachability** | `forward-first: no` means an unreachable Quad9 SERVFAILs *everything*, by design. There is no degraded mode to mask it. | Any successful resolution proves it. A total outage is the signal. |
-| **Blocklist freshness** | A feed that stopped updating still resolves fine. Nothing surfaces it. | Age of `/var/lib/unbound/rpz/*.rpz`, or the `rpz-update` timer's last success. |
-
-### The cheap half is already paid for
-
-`enable_dns_failover` created four Route 53 health checks, and every one of them
-publishes a `HealthCheckStatus` metric to CloudWatch in `us-east-1` whether anything
-reads it or not. An alarm on that metric plus an SNS topic with an email subscription
-is the shortest path from "a node was silently withdrawn" to "you were told" —
-roughly $0.10 per alarm per month, SNS email free, and about 20 lines of Terraform.
-
-Do this first, because right now failover is *worse* than no failover for one
-specific failure: a node can die, be withdrawn, and leave you running on one node at
-two nodes' cost, indefinitely, with every client working perfectly and nothing
-anywhere saying so. The mechanism that protects clients is also the mechanism that
-hides the outage.
-
-What it still does not cover, and why the prober below is not cancelled: a TCP check
-cannot see an expiring certificate, a dead unbound behind a live dnsdist, a broken
-DoH/DoH3/DoQ listener, a validator that stopped validating, or a stale blocklist.
-And certificate expiry hits **both** nodes at once, so it is precisely the failure
-failover cannot help with.
-
-### Shape of the implementation
-
-You already own the right machine: **mtbaldy** (a Debian 13 box at
-Hetzner Hillsboro that also runs a WireGuard endpoint). It is off-node, always on,
-already trusted as `admin_cidr`, and involves no third party. Checked 2026-09-27:
-its `dig` (BIND 9.20) speaks DoT and DoH natively, so those checks and the
-certificate check need nothing installed; DoQ and DoH3 need `kdig` and `dnslookup`,
-which it does not have. `Linger=no` for the admin user, so a scheduled check needs
-root once either way — a system timer, or `loginctl enable-linger` for a user one.
-
-- a systemd timer there running `scripts/test-resolver.sh` against the public name
-- plus a certificate-expiry check, which is the single highest-value piece
-- alert on failure
-
-**The gap that leaves:** if mtbaldy dies or the timer breaks, silence is
-indistinguishable from success. The fix is a **dead man's switch** — the check
-pings a URL only when it *passes*, and the service alerts when pings stop. That
-covers both "resolver broken" and "monitor broken".
-
-Healthchecks.io has a free tier suitable for this. What it learns is that a host
-exists and is up, which the Certificate Transparency log already made public when
-the certificate was issued, so it discloses nothing new.
-
-**Done looks like:** the certificate silently failing to renew produces an alert
-weeks before clients notice, and killing the timer on mtbaldy also produces one.
-
-**Estimate:** a timer, a check script, a README section. Roughly an afternoon.
+| **Blocklist freshness** | A feed that stopped updating still blocks yesterday's list; nothing surfaces it. | Needs node access the prober lacks. Cheapest: `rpz-update.sh` publishes its own success metric, alarmed on absence — but that puts an AWS key on the nodes, which today hold only the TXT-only ACME key. Decide before building. |
+| **IPv6 end to end** | mtbaldy has no IPv6 route, so the prober checks IPv4 only. The v6 health checks prove TCP/853 and nothing more. | A v6-capable monitor host, or IPv6 on mtbaldy. |
+| **A second vantage point** | A failure that affects only some networks — UDP/QUIC through home NAT is the classic, and it is how DoQ and DoH3 fail for real users — is invisible from a datacenter. | The Airflow instance on dollarmtn, on a residential connection, running the same checks as a DAG. It lives in the separate `galena-smt` repo and currently has no alert channel configured. |
 
 ---
 
@@ -114,13 +74,11 @@ checks (two nodes × two address families) at $0.75 each, so $3.00/month; `make
 nodes` prints the live configuration and `make apply` includes it in the estimate.
 See README "Failover".
 
-**What it does not cover, which is why section 1 still stands.** A TCP check proves
-the port accepts connections. It cannot see an expired certificate (no TLS handshake,
+**What it does not cover, which is why section 1 exists.** A TCP check proves the
+port accepts connections. It cannot see an expired certificate (no TLS handshake,
 and expiry hits both nodes at once anyway), a dead unbound behind a live dnsdist
-answering SERVFAIL, or a broken DoH/DoH3/DoQ listener. It also *withdraws* a node
-without *telling* anyone — a health check is a failover mechanism here, not an alert.
-Route 53 health checks can publish to CloudWatch and alarm, which is the cheapest
-path to turning this into the notification half of section 1 and worth doing next.
+answering SERVFAIL, or a broken DoH/DoH3/DoQ listener, and it *withdraws* a node
+without *telling* anyone. Section 1's prober and alarms cover all of that.
 
 ### Latency-based routing, once there is a third location
 

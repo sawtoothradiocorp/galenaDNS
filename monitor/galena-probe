@@ -1,0 +1,405 @@
+#!/usr/bin/env python3
+"""galena-dns external prober.
+
+Runs on a machine that is NOT a resolver node (a monitor on the node cannot report
+the node down), every few minutes from a systemd timer, and checks each node by
+address — never through the hostname, because Route 53 withholds an unhealthy
+node from DNS and the prober would then quietly stop looking at it.
+
+Per node:
+  dot, doh, doq, doh3   the transport answers a real query, certificate verified
+  dnssec                a bogus signature SERVFAILs and a good one sets AD
+  blocking              a known ad/tracker domain comes back NXDOMAIN
+  cert                  both TLS listeners present a valid certificate for the
+                        domain, with days-remaining thresholds
+
+These are the failures a Route 53 TCP health check cannot see: it proves a port
+accepts connections, not that anything behind it works. Certificate expiry is the
+one that matters most — renewal is unattended, it fails silently, and it hits every
+node at once, so failover cannot help with it.
+
+Alerting goes to the SNS topic in terraform/monitoring.tf, and only on change: a
+check that starts failing, one that recovers, and a reminder every REMIND_HOURS
+while something stays broken. Never every run.
+
+After any run with no FAIL it publishes a heartbeat metric. A CloudWatch alarm
+fires when the heartbeat stops, which covers both "the resolver is failing" and
+"this prober, its timer or its host is dead" — the second being the failure no
+monitor can report about itself.
+
+Privacy: every query here is for a fixed public test name. Nothing about any
+client is involved, and nothing is sent to the nodes that `make audit` would not
+already consider ordinary traffic.
+
+  galena-probe              run once; alert and heartbeat as configured
+  galena-probe --dry-run    run once, print results, touch no state and no AWS
+  galena-probe --test-alert publish one test message, to prove the email path
+
+Configuration is the environment, normally /etc/galena-probe/probe.env, rendered
+by `make monitor-deploy` from Terraform outputs.
+"""
+
+import argparse
+import datetime as dt
+import json
+import os
+import re
+import shutil
+import socket
+import ssl
+import subprocess
+import sys
+import time
+
+# --- Fixtures ---------------------------------------------------------------
+# The same ones scripts/test-resolver.sh uses and verifies against the deployed
+# config, so a fixture that rots shows up in `make test` too.
+RESOLVE_NAME = "example.com"
+DNSSEC_BOGUS = "dnssec-failed.org"
+DNSSEC_VALID = "sigok.verteiltesysteme.net"
+BLOCKED_NAME = "scorecardresearch.com"
+
+QUERY_TIMEOUT = 5  # seconds, per attempt, inside each tool
+PROCESS_TIMEOUT = 20  # seconds, hard ceiling on any one subprocess
+RETRY_DELAY = 3  # a FAIL is retried once, so one lost packet does not page
+
+OK, WARN, FAIL = "OK", "WARN", "FAIL"
+RANK = {OK: 0, WARN: 1, FAIL: 2}
+
+
+def env(name, default=None):
+    value = os.environ.get(name, default)
+    if value is None or value == "":
+        sys.exit(f"galena-probe: {name} is not set (normally /etc/galena-probe/probe.env)")
+    return value
+
+
+def load_config(need_aws):
+    nodes = []
+    for pair in env("GALENA_NODES").split():
+        name, _, ip = pair.partition("=")
+        if not name or not ip:
+            sys.exit(f"galena-probe: GALENA_NODES entry {pair!r} is not name=ip")
+        nodes.append((name, ip))
+    cfg = {
+        "domain": env("GALENA_DOMAIN"),
+        "nodes": nodes,
+        "doh_path": env("GALENA_DOH_PATH", "/dns-query"),
+        "cert_warn_days": int(env("GALENA_CERT_WARN_DAYS", "21")),
+        "cert_fail_days": int(env("GALENA_CERT_FAIL_DAYS", "7")),
+        "remind_hours": float(env("GALENA_REMIND_HOURS", "24")),
+        # systemd sets STATE_DIRECTORY from StateDirectory=.
+        "state_dir": os.environ.get("STATE_DIRECTORY") or "/var/lib/galena-probe",
+    }
+    if need_aws:
+        cfg.update(
+            topic_arn=env("GALENA_TOPIC_ARN"),
+            region=env("GALENA_AWS_REGION", "us-east-1"),
+            namespace=env("GALENA_METRIC_NAMESPACE"),
+            metric=env("GALENA_METRIC_NAME"),
+        )
+    return cfg
+
+
+# --- Running the DNS tools ----------------------------------------------------
+
+
+def run(cmd):
+    if not shutil.which(cmd[0]):
+        return None, f"{cmd[0]} is not installed"
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=PROCESS_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return None, f"no answer within {PROCESS_TIMEOUT}s"
+    return p.returncode, p.stdout + p.stderr
+
+
+def parse(out):
+    """dig, kdig and dnslookup all print a dig-style header; fields differ only
+    in punctuation, so match tokens rather than layout."""
+    status = re.search(r"status: ([A-Z]+)", out)
+    answers = re.search(r"ANSWER: (\d+)", out)
+    flags = re.search(r";; [Ff]lags: ([a-z ]+)", out)
+    return (
+        status.group(1) if status else None,
+        int(answers.group(1)) if answers else 0,
+        set(flags.group(1).split()) if flags else set(),
+    )
+
+
+def last_line(out):
+    lines = [l.strip() for l in out.strip().splitlines() if l.strip()]
+    return (lines[-1] if lines else "no output")[:160]
+
+
+def query(cfg, ip, transport, name):
+    """Returns (rc, output). Certificate verification is ON for every transport:
+    for dig that takes BOTH +tls-ca and +tls-hostname — +tls-hostname alone does
+    not verify — and each was checked against a wrong hostname on 2026-09-27."""
+    d = cfg["domain"]
+    if transport in ("dot", "doh"):
+        cmd = ["dig", "+tls-ca", f"+tls-hostname={d}", f"+time={QUERY_TIMEOUT}",
+               "+tries=1", "+adflag", f"@{ip}", name, "A"]
+        cmd.insert(1, "+tls" if transport == "dot" else f"+https={cfg['doh_path']}")
+    elif transport == "doq":
+        cmd = ["kdig", "+quic", "+tls-ca", f"+tls-hostname={d}",
+               f"+timeout={QUERY_TIMEOUT}", "+retry=0", f"@{ip}", name, "A"]
+    elif transport == "doh3":
+        # The trailing IP pins the connection to this node while the URL's
+        # hostname still drives SNI and certificate verification.
+        cmd = ["dnslookup", name, f"h3://{d}{cfg['doh_path']}", ip]
+    else:
+        raise ValueError(transport)
+    return run(cmd)
+
+
+# --- Checks -----------------------------------------------------------------
+# Each returns (status, detail).
+
+
+def check_transport(cfg, ip, transport):
+    rc, out = query(cfg, ip, transport, RESOLVE_NAME)
+    if rc is None:
+        return FAIL, out
+    status, answers, _ = parse(out)
+    if status == "NOERROR" and answers > 0:
+        return OK, f"{answers} answer(s)"
+    if status:
+        return FAIL, f"status {status}, {answers} answer(s)"
+    return FAIL, last_line(out)
+
+
+def check_dnssec(cfg, ip):
+    rc, out = query(cfg, ip, "dot", DNSSEC_BOGUS)
+    if rc is None:
+        return FAIL, out
+    status, _, _ = parse(out)
+    if status is None:
+        # No DNS answer at all is a transport problem, and the dot check says
+        # so; blaming validation here would send the reader the wrong way.
+        return FAIL, "no answer over DoT: " + last_line(out)
+    if status != "SERVFAIL":
+        return FAIL, f"{DNSSEC_BOGUS} returned {status or 'nothing'}, expected SERVFAIL — validation may be off"
+    rc, out = query(cfg, ip, "dot", DNSSEC_VALID)
+    if rc is None:
+        return FAIL, out
+    status, _, flags = parse(out)
+    if status is None:
+        return FAIL, "no answer over DoT: " + last_line(out)
+    if status != "NOERROR" or "ad" not in flags:
+        return FAIL, f"{DNSSEC_VALID} returned {status or 'nothing'} without AD — validation may be off"
+    return OK, "bogus rejected, valid authenticated"
+
+
+def check_blocking(cfg, ip):
+    rc, out = query(cfg, ip, "dot", BLOCKED_NAME)
+    if rc is None:
+        return FAIL, out
+    status, _, _ = parse(out)
+    if status is None:
+        return FAIL, "no answer over DoT: " + last_line(out)
+    if status == "NXDOMAIN":
+        return OK, f"{BLOCKED_NAME} blocked"
+    return FAIL, f"{BLOCKED_NAME} returned {status or 'nothing'}, expected NXDOMAIN — blocklists may not be loaded"
+
+
+def cert_days_left(cfg, ip, port):
+    # Python's default context verifies the chain against the system store and
+    # the hostname against the certificate; either failing raises.
+    ctx = ssl.create_default_context()
+    with socket.create_connection((ip, port), timeout=QUERY_TIMEOUT) as sock:
+        with ctx.wrap_socket(sock, server_hostname=cfg["domain"]) as tls:
+            not_after = ssl.cert_time_to_seconds(tls.getpeercert()["notAfter"])
+    return (not_after - time.time()) / 86400
+
+
+def check_cert(cfg, ip):
+    # Both listeners, because dnsdist loads each separately: a reload that took
+    # on one and not the other is a real failure mode.
+    days = {}
+    for port in (853, 443):
+        try:
+            days[port] = cert_days_left(cfg, ip, port)
+        except (ssl.SSLError, ssl.CertificateError) as e:
+            return FAIL, f"port {port}: certificate rejected: {e}"[:160]
+        except OSError as e:
+            return FAIL, f"port {port}: {e}"[:160]
+    worst = min(days.values())
+    detail = f"{worst:.0f} days left"
+    if worst < cfg["cert_fail_days"]:
+        return FAIL, detail + " — renewal has failed; see README \"Troubleshooting\""
+    if worst < cfg["cert_warn_days"]:
+        return WARN, detail + " — renewal should have happened by now"
+    return OK, detail
+
+
+def with_retry(fn):
+    status, detail = fn()
+    if status == FAIL:
+        time.sleep(RETRY_DELAY)
+        status, detail = fn()
+    return status, detail
+
+
+def run_checks(cfg):
+    results = {}
+    for node, ip in cfg["nodes"]:
+        checks = [(t, lambda t=t: check_transport(cfg, ip, t)) for t in ("dot", "doh", "doq", "doh3")]
+        checks += [
+            ("dnssec", lambda: check_dnssec(cfg, ip)),
+            ("blocking", lambda: check_blocking(cfg, ip)),
+            ("cert", lambda: check_cert(cfg, ip)),
+        ]
+        for name, fn in checks:
+            results[f"{node}/{name}"] = with_retry(fn)
+    return results
+
+
+# --- State and alerting -------------------------------------------------------
+
+
+def state_path(cfg):
+    return os.path.join(cfg["state_dir"], "state.json")
+
+
+def load_state(cfg):
+    try:
+        with open(state_path(cfg)) as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
+
+def save_state(cfg, state):
+    tmp = state_path(cfg) + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(state, f, indent=2, sort_keys=True)
+    os.replace(tmp, state_path(cfg))
+
+
+def plan_alerts(cfg, results, state, now):
+    """Compare this run against the last. Returns (new_state, sections), where
+    sections maps a heading to lines; empty sections mean nothing to send."""
+    new_state, new, recovered, still = {}, [], [], []
+    remind_after = cfg["remind_hours"] * 3600
+    for key, (status, detail) in sorted(results.items()):
+        prev = state.get(key, {"status": OK})
+        entry = {"status": status, "detail": detail,
+                 "since": prev.get("since", now), "notified": prev.get("notified")}
+        line = f"  {key:<18} {status:<4}  {detail}"
+        if status != prev["status"]:
+            entry["since"] = now
+            if status == OK:
+                recovered.append(f"  {key:<18} OK    {detail} (was {prev['status']})")
+                entry["notified"] = None
+            else:
+                new.append(line)
+                entry["notified"] = now
+        elif status != OK and now - (entry["notified"] or 0) >= remind_after:
+            since = dt.datetime.fromtimestamp(entry["since"], dt.timezone.utc)
+            still.append(f"{line}  (since {since:%Y-%m-%d %H:%M} UTC)")
+            entry["notified"] = now
+        new_state[key] = entry
+    sections = {"New problems": new, "Still failing": still, "Recovered": recovered}
+    return new_state, {k: v for k, v in sections.items() if v}
+
+
+def compose(cfg, results, sections):
+    counts = {s: sum(1 for st, _ in results.values() if st == s) for s in (FAIL, WARN)}
+    worst = FAIL if counts[FAIL] else WARN if counts[WARN] else OK
+    subject = f"[{cfg['domain']}] {worst}"
+    if worst != OK:
+        bad = sorted(k for k, (st, _) in results.items() if st != OK)
+        subject += ": " + ", ".join(bad)
+    else:
+        subject += ": all checks recovered"
+    # SNS: at most 100 printable ASCII characters, no newlines.
+    subject = subject.encode("ascii", "replace").decode()[:100]
+
+    host = socket.gethostname()
+    body = [f"galena-dns prober on {host}, {dt.datetime.now(dt.timezone.utc):%Y-%m-%d %H:%M} UTC", ""]
+    for heading, lines in sections.items():
+        body += [heading + ":", *lines, ""]
+    body += ["Everything checked this run:"]
+    body += [f"  {k:<18} {st:<4}  {d}" for k, (st, d) in sorted(results.items())]
+    body += ["", "Nodes are checked by address, so a node Route 53 has withdrawn from",
+             f"{cfg['domain']} is still probed. What each check means: README \"Monitoring\"."]
+    return subject, "\n".join(body)
+
+
+def aws_client(cfg, service):
+    import boto3  # imported late so --dry-run needs nothing but the DNS tools
+
+    return boto3.client(service, region_name=cfg["region"])
+
+
+def publish(cfg, subject, body):
+    aws_client(cfg, "sns").publish(TopicArn=cfg["topic_arn"], Subject=subject, Message=body)
+
+
+def heartbeat(cfg):
+    aws_client(cfg, "cloudwatch").put_metric_data(
+        Namespace=cfg["namespace"],
+        MetricData=[{"MetricName": cfg["metric"], "Value": 1, "Unit": "Count"}],
+    )
+
+
+# --- Main -------------------------------------------------------------------
+
+
+def print_results(results):
+    for key, (status, detail) in sorted(results.items()):
+        print(f"{key:<18} {status:<4}  {detail}", flush=True)
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--dry-run", action="store_true", help="print results; no state, no AWS")
+    ap.add_argument("--test-alert", action="store_true", help="publish one test message and exit")
+    args = ap.parse_args()
+
+    cfg = load_config(need_aws=not args.dry_run)
+
+    if args.test_alert:
+        publish(cfg, f"[{cfg['domain']}] test alert",
+                f"Test message from galena-probe on {socket.gethostname()}.\n\n"
+                "If you are reading this, the prober's key can publish and the email\n"
+                "subscription is confirmed. Nothing is wrong.")
+        print("test alert published")
+        return 0
+
+    results = run_checks(cfg)
+    print_results(results)
+    failed = any(st == FAIL for st, _ in results.values())
+
+    if args.dry_run:
+        return 1 if failed else 0
+
+    now = time.time()
+    new_state, sections = plan_alerts(cfg, results, load_state(cfg), now)
+    if sections:
+        subject, body = compose(cfg, results, sections)
+        try:
+            publish(cfg, subject, body)
+        except Exception as e:  # noqa: BLE001 — any failure here means no email
+            # State is NOT saved, so the same transition is retried next run
+            # rather than being recorded as notified when nobody was.
+            print(f"ALERT NOT SENT: {e}", file=sys.stderr, flush=True)
+            return 1
+        print(f"alert sent: {subject}", flush=True)
+    save_state(cfg, new_state)
+
+    if failed:
+        # No heartbeat: the silence is itself the backstop if the alert above
+        # did not arrive for any reason.
+        return 1
+    try:
+        heartbeat(cfg)
+    except Exception as e:  # noqa: BLE001
+        print(f"HEARTBEAT NOT SENT: {e}", file=sys.stderr, flush=True)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
