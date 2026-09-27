@@ -76,6 +76,38 @@ cheapest 4 GB option is `cpx21` at $37.49.
 
 Mechanically it is one key in `var.nodes`; the map was built for this.
 
+Prefer **hel1** over nbg1. fsn1 and nbg1 are both in Germany, sharing one legal
+system, one national grid and one country's network infrastructure; hel1 is in
+Finland at the same price and the same `eu-central` network zone. Given the German
+resolver-liability precedent noted in section 3, that is the one axis of diversity
+worth buying. The caveat is that Hetzner Online GmbH is a German company either
+way, so this diversifies the *server*, not the *operator* — full diversity means a
+second provider. The latency cost is ~15-25 ms for central-European clients and
+negligible from the US.
+
+### Two nodes is not failover on its own
+
+A second address in the record set gives *distribution*, not failover. DoT and DoH
+clients resolve the hostname once, pick an address and hold that connection, so a
+client is pinned to one node for the life of the connection rather than alternating
+per query. When a node dies, the clients on it fail and retry, and the behaviour
+varies by platform — Android will surface "Private DNS server cannot be accessed"
+before it recovers.
+
+**Route 53 health checks on TCP/853, attached to the record set**, are what convert
+two nodes into real failover: a dead node's address is withdrawn from DNS
+automatically. Roughly $0.50-0.75 per check per month, and it overlaps section 1 —
+a health check that fires is also a monitoring signal.
+
+### Latency-based routing, once there is a third location
+
+While every node is in `eu-central`, returning both addresses is right. A node on
+another continent makes plain round-robin actively harmful: a European client would
+get a distant address a third of the time, and stay pinned to it. **Route 53
+latency-based routing** keeps the single hostname and returns the nearest node
+instead. A small change to `dns.tf`, and the prerequisite for ever putting a node
+outside Europe.
+
 ---
 
 ## 3. Before anyone else is pointed at it

@@ -168,11 +168,22 @@ audit: ## Run the privacy audit on every node
 		ssh $(SSH_OPT) "root@$$ip" "bash $(REMOTE)/bin/privacy-audit.sh"; \
 	done
 
-test: ## Test the resolver from this machine (ARGS="--include-ratelimit" for the rate-limit test)
+test: ## Test EVERY node from this machine (ARGS="--include-ratelimit" for the rate-limit test)
+	@# One node at a time, by address. Testing the hostname alone would exercise
+	@# whichever node DNS happened to return and silently skip the others — a
+	@# second node that came up broken would still look healthy here.
+	@# `for` over a command substitution, not a pipe into `while`: a piped while
+	@# runs in a subshell, so rc=1 would be lost and a failing node would exit 0.
 	@domain=$$($(TF) output -raw domain); \
-	ip=$$($(TF) output -json nodes | python3 -c 'import json,sys;print(list(json.load(sys.stdin).values())[0]["ipv4"])'); \
 	feeds=$$($(TF) output -json rpz_feed_urls | python3 -c 'import json,sys;[print("--feed",u) for u in json.load(sys.stdin)]' | tr "\n" " "); \
-	scripts/test-resolver.sh --domain "$$domain" --ip "$$ip" $$feeds $(ARGS)
+	nodes=$$($(TF) output -json nodes | python3 -c 'import json,sys;[print(k+","+v["ipv4"]) for k,v in json.load(sys.stdin).items()]'); \
+	rc=0; \
+	for entry in $$nodes; do \
+		name=$${entry%%,*}; ip=$${entry#*,}; \
+		echo; echo "==> $$name ($$ip)"; \
+		scripts/test-resolver.sh --domain "$$domain" --ip "$$ip" $$feeds $(ARGS) || rc=1; \
+	done; \
+	[ $$rc -eq 0 ] || { echo; echo "At least one node FAILED."; exit 1; }
 
 mobileconfig: ## Generate unsigned iOS/macOS DoH + DoT profiles
 	@domain=$$($(TF) output -raw domain); \

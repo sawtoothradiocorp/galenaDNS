@@ -507,7 +507,37 @@ fi
 # Renewal must reload dnsdist: it does not notice new certificate files by itself.
 install -d -m 0755 /etc/letsencrypt/renewal-hooks/deploy
 ln -sf /usr/local/sbin/galena-acme-deploy /etc/letsencrypt/renewal-hooks/deploy/galena
+
+# Stagger renewal so multiple nodes never run DNS-01 at the same time.
+#
+# Every node holds its own certificate for the SAME hostname, so every node
+# validates against the same _acme-challenge TXT record. certbot's route53 plugin
+# tracks challenge values in a process-local dict and sends UPSERT with only its
+# own values, without reading what is already in the record set — see
+# _change_txt_record in certbot_dns_route53. Two nodes validating at once means
+# the second overwrites the first's TXT, the first fails validation, and cleanup
+# can delete the survivor's record as well.
+#
+# Debian ships OnCalendar=00,12:00:00 with RandomizedDelaySec=43200, so two nodes
+# pick independent times in the same 12h window. Nodes deployed together also have
+# certificates that come due the same day, so the windows line up. Rare, but it
+# fails into a volatile journal that a reboot erases.
+#
+# node.env is identical on every node, so the offset is derived from the node's
+# own hostname instead: ~720 distinct slots, no coordination, stable across
+# deploys. A narrow RandomizedDelaySec keeps jitter inside the slot.
+stagger=$(hostname | cksum | cut -d' ' -f1)
+install -d -m 0755 /etc/systemd/system/certbot.timer.d
+cat > /etc/systemd/system/certbot.timer.d/galena-stagger.conf <<EOF
+[Timer]
+# Empty value first: systemd appends to OnCalendar otherwise, it does not replace.
+OnCalendar=
+OnCalendar=*-*-* $((stagger % 12)),$((stagger % 12 + 12)):$((stagger / 12 % 60)):00
+RandomizedDelaySec=600
+EOF
+systemctl daemon-reload
 systemctl enable --now certbot.timer >/dev/null 2>&1 || true
+ok "renewal staggered to $(printf '%02d:%02d' "$((stagger % 12))" "$((stagger / 12 % 60))") and $(printf '%02d:%02d' "$((stagger % 12 + 12))" "$((stagger / 12 % 60))") UTC (±10m)"
 RENEWED_LINEAGE="/etc/letsencrypt/live/${GALENA_DOMAIN}" /usr/local/sbin/galena-acme-deploy
 ok "renewal hook installed"
 
