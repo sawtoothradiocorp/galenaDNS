@@ -664,6 +664,12 @@ asks twice. Re-check pricing yourself with:
 curl -H "Authorization: Bearer $HCLOUD_TOKEN" https://api.hetzner.cloud/v1/pricing
 ```
 
+## Backlog
+
+Open work, and what each item blocks, is in [BACKLOG.md](BACKLOG.md). The short
+version: there is no availability monitoring at all, and a single node means total
+DNS failure rather than degradation for anyone pointed at it.
+
 ## License
 
 Configuration in this repository is yours to use. Blocklists are Hagezi's, under
