@@ -9,7 +9,7 @@ of it becomes required the moment anyone else is pointed at it.
 
 ---
 
-## 1. External availability monitoring — built, pending install
+## 1. External availability monitoring — live
 
 Until 2026-09-27 nothing told you the resolver was broken, and failover made that
 worse: a dead node is withdrawn, clients move to the survivor, and nothing anywhere
@@ -28,9 +28,14 @@ dollarmtn were both considered for the dead man's switch; CloudWatch won because
 it needs no new host, no cross-host SSH key and no third party beyond the one
 already holding the zone.
 
-**Done looks like:** `install.sh` has run, the test alert arrived, `probe-silent`
-has cleared, and deliberately breaking one check — stopping dnsdist on one node —
-produced a FAIL email, a withdrawn address, and a recovery email.
+Installed on mtbaldy on 2026-09-27: first run 14/14 OK, test alert published,
+heartbeat in CloudWatch, `probe-silent` cleared to OK, all four node alarms OK.
+
+**Still to prove:** that a real failure alerts. Stopping dnsdist on one node for
+~10 minutes should produce a prober FAIL email, the node's two `-dot-down`
+alarms, a withdrawn address, and then recovery emails for all of it. Until that
+has been seen, the failure path is tested only in pieces — the state machine
+with scripted inputs, verification with a wrong hostname — not end to end.
 
 ### Still not covered
 

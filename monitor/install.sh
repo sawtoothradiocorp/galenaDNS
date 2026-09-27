@@ -76,4 +76,7 @@ if [[ -s /etc/galena-probe/aws.credentials ]]; then
   systemctl start galena-probe.service || true
   journalctl -u galena-probe.service -n 20 --no-pager -o cat
 fi
-say "done. Timer: $(systemctl show galena-probe.timer -p NextElapseUSecRealtime --value)"
+# list-timers, not NextElapseUSecRealtime: an OnUnitActiveSec timer only has a
+# monotonic next-elapse, so the realtime property prints blank.
+say "done. Next run:"
+systemctl list-timers galena-probe.timer --no-pager | sed -n 2p
