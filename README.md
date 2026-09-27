@@ -479,6 +479,23 @@ cannot override it. DNSSEC is still validated *here*, so the upstream is trusted
 relay and never to tell the truth — and `forward_tls_upstreams = []` reverts the
 whole decision in one line.
 
+**A packet cache in front of unbound.** Repeated questions are answered from
+dnsdist's RAM instead of crossing into unbound. On an ad-blocking resolver the most
+repeated queries are the blocked ones — the same telemetry endpoints, constantly —
+and each otherwise walks four RPZ zones to produce an identical NXDOMAIN.
+
+It costs nothing privacy-wise: entries are keyed by the question, never by the
+client, so like unbound's own cache it can say what was asked recently but never by
+whom, and it never reaches disk. PRIVACY.md lists it with the other in-memory
+structures rather than letting the document drift.
+
+`rpz-update.sh` expunges it after any successful blocklist reload, so a newly
+blocked domain is blocked when the list loads rather than whenever its cached entry
+happens to expire. `temporaryFailureTTL` is a deliberate 5 seconds: an upstream
+block on a signed zone arrives as SERVFAIL, and with `forward-first: no` an
+unreachable upstream makes everything SERVFAIL — caching either for a minute would
+turn a blip into a visible outage.
+
 **dnsdist 2.1 from repo.powerdns.com, not Debian.** Incoming DoQ and DoH3 landed
 in dnsdist 1.9.0 and need Cloudflare's quiche; Debian's package is far older. The
 official packages statically link quiche, and `bootstrap.sh` refuses to continue

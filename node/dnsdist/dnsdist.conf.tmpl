@@ -64,6 +64,47 @@ newServer({
   maxCheckFailures = 3,
 })
 
+-- ---------------------------------------------------------------------------
+-- Packet cache
+-- ---------------------------------------------------------------------------
+-- Answers repeated questions from RAM instead of crossing into unbound. On an
+-- ad-blocking resolver the most repeated queries are the blocked ones — the same
+-- telemetry endpoints, constantly — and each of those otherwise walks four RPZ
+-- zones to produce the same NXDOMAIN.
+--
+-- Privacy: entries are keyed by QUESTION, not by client. Like unbound's own cache
+-- it can say what was asked recently, never by whom, and it never touches disk.
+-- PRIVACY.md lists it alongside the other in-memory structures.
+local packetCacheEntries = ${GALENA_PACKET_CACHE_ENTRIES}
+if packetCacheEntries > 0 then
+  local pc = newPacketCache(packetCacheEntries, {
+    -- A cache entry must not be served to a client that asked a different
+    -- question, and the DNSSEC OK bit is part of the question: a validating
+    -- client needs RRSIGs, a plain one must not be handed them. dnsdist keys on
+    -- the EDNS header for this reason. Asserted empirically after deploy by
+    -- querying a signed name with and without +dnssec.
+    maxTTL = 86400,
+    minTTL = 0,
+    -- Negative answers are most of what this cache holds, since RPZ blocks are
+    -- NXDOMAIN. Bounded so a de-listed domain recovers without a flush, though
+    -- rpz-update.sh expunges the cache on every successful blocklist reload so
+    -- policy changes take effect immediately rather than at TTL expiry.
+    maxNegativeTTL = 3600,
+    -- Deliberately short. An upstream block on a DNSSEC-signed zone arrives as
+    -- SERVFAIL because unbound rejects the forged denial, and if the upstream is
+    -- ever unreachable then forward-first: no makes everything SERVFAIL. Caching
+    -- either for a minute would turn a blip into a visible outage.
+    temporaryFailureTTL = 5,
+    staleTTL = 60,
+    keepStaleData = false,
+    -- No ECS anywhere in this design, so there is nothing to parse and nothing
+    -- about the client's network to fold into the cache key.
+    parseECS = false,
+    numberOfShards = 8,
+  })
+  getPool(""):setCache(pc)
+end
+
 -- This is a public resolver: everyone is allowed to ask.
 setACL({ "0.0.0.0/0", "::/0" })
 

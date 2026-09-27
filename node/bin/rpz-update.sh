@@ -178,6 +178,20 @@ done < "$MANIFEST"
 
 rmdir "$TMP_DIR" 2>/dev/null || true
 
+# dnsdist's packet cache holds the NXDOMAINs these zones produced. Without this,
+# a domain added to a blocklist keeps resolving, and one removed keeps being
+# blocked, until each cached entry ages out — up to maxNegativeTTL. Expunging
+# costs one cold cache every 8 hours and makes a policy change take effect when
+# it is loaded rather than eventually.
+#
+# Best effort: no packet cache configured, or dnsdist not running, is not a
+# blocklist failure and must not fail this run.
+if ((updated > 0)) && command -v dnsdist >/dev/null 2>&1; then
+  if dnsdist -c -e 'local c = getPool(""):getCache() if c then c:expungeByName(newDNSName("."), DNSQType.ANY, true) end' >/dev/null 2>&1; then
+    log "dnsdist packet cache expunged so the new lists take effect now"
+  fi
+fi
+
 log "done: ${updated} updated, ${skipped} unchanged$([[ $failed -eq 1 ]] && echo ", 1 or more FAILED")"
 
 if ((failed)); then

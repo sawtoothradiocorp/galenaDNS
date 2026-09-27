@@ -430,6 +430,24 @@ variable "unbound_memory_max" {
 # Observability
 # ---------------------------------------------------------------------------
 
+variable "dnsdist_packet_cache_entries" {
+  description = <<-EOT
+    Maximum entries in dnsdist's packet cache, which answers repeated questions
+    from RAM instead of crossing into unbound. 0 disables it.
+
+    Entries are keyed by question, never by client, so like unbound's own cache it
+    can say what was asked recently but never by whom, and nothing reaches disk.
+    Budget a few hundred bytes per entry.
+  EOT
+  type        = number
+  default     = 100000
+
+  validation {
+    condition     = var.dnsdist_packet_cache_entries >= 0 && var.dnsdist_packet_cache_entries <= 5000000
+    error_message = "dnsdist_packet_cache_entries must be between 0 (disabled) and 5,000,000."
+  }
+}
+
 variable "enable_localhost_metrics" {
   description = <<-EOT
     Bind dnsdist's webserver to 127.0.0.1 for aggregate metrics. Off by default:

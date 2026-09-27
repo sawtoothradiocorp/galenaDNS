@@ -32,6 +32,7 @@ locals {
     GALENA_UNBOUND_RRSET_CACHE     = var.unbound_rrset_cache_size
     GALENA_UNBOUND_MEMORY_MAX      = var.unbound_memory_max
     GALENA_ENABLE_METRICS          = var.enable_localhost_metrics ? "1" : "0"
+    GALENA_PACKET_CACHE_ENTRIES    = tostring(var.dnsdist_packet_cache_entries)
     GALENA_JOURNAL_RUNTIME_MAX_USE = var.journal_runtime_max_use
     GALENA_ADMIN_CIDR              = var.admin_cidr
     # Space-separated unbound forward-addr values; empty string means recurse from

@@ -392,11 +392,24 @@ if [[ -r $dconf ]]; then
   # 5000-entry ring as 0.
   ring=$(grep -oE '^local ringEntries = [0-9]+' "$dconf" | grep -oE '[0-9]+$' || echo "?")
   if grep -q 'recordResponses = false' "$dconf"; then
-    pass "dnsdist records no responses in RAM" "ring=${ring} queries, responses off"
+    pass "dnsdist ring records no responses" "ring=${ring} queries, responses off"
   else
-    warn "dnsdist records no responses in RAM" "recordResponses is not explicitly false"
+    warn "dnsdist ring records no responses" "recordResponses is not explicitly false"
   fi
-  note "the ring is the only place client IPs or qnames exist at all, in RAM only"
+  note "the ring is the only place CLIENT IPs and qnames appear together, in RAM only"
+
+  # The packet cache also holds responses in RAM, but keyed by question rather
+  # than by client, so it cannot attribute anything to anyone. Saying "no
+  # responses in RAM" while a packet cache exists would be false, hence the
+  # narrower claim above and this reported separately.
+  pcache=$(grep -oE '^local packetCacheEntries = [0-9]+' "$dconf" | grep -oE '[0-9]+$' || echo 0)
+  if [[ ${pcache:-0} -gt 0 ]]; then
+    hits=$(dnsdist -c -e 'local c = getPool(""):getCache() if c then print(c:getStats()["hits"].." "..c:getEntriesCount()) end' 2>/dev/null | tr -d '\r' | tail -1)
+    pass "packet cache is question-keyed, RAM only" "max ${pcache} entries${hits:+, hits/current: ${hits}}"
+    note "it can say what was asked recently, never by whom; it never touches disk"
+  else
+    pass "packet cache is question-keyed, RAM only" "disabled"
+  fi
 
   # The webserver's HTML console can surface topQueries from the ring.
   if ss -lntHn 2>/dev/null | awk '{print $4}' | grep -qE ':8083$'; then

@@ -46,6 +46,7 @@ that knew nothing at all could not answer a query or stop an attack.
 | Client IPs currently rate-limited | dnsdist dynamic block table | The block duration, 60s by default |
 | Per-IP query counters | dnsdist `MaxQPSIPRule` | A sliding one-second window |
 | Query names and answers | unbound's DNS cache | The record's TTL. **Not associated with any client** — the cache cannot say who asked. |
+| Query names and answers | dnsdist's packet cache, 100,000 entries by default | The record's TTL, capped at 24h and 1h for negative answers. **Not associated with any client** — keyed by the question alone. Flushed whenever a blocklist reloads. `dnsdist_packet_cache_entries = 0` removes it. |
 | Client IPs of open connections | Linux conntrack and socket tables | The life of the connection. Unavoidable in any networked service. |
 | Warnings and errors | journald, in RAM | Until reboot, capped at 16 MB. `MaxLevelStore=warning`, so routine operation logs nothing. |
 
