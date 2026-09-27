@@ -34,6 +34,10 @@ locals {
     GALENA_ENABLE_METRICS          = var.enable_localhost_metrics ? "1" : "0"
     GALENA_JOURNAL_RUNTIME_MAX_USE = var.journal_runtime_max_use
     GALENA_ADMIN_CIDR              = var.admin_cidr
+    # Space-separated unbound forward-addr values; empty string means recurse from
+    # the root. bootstrap.sh renders the forward-zone block from this, and
+    # privacy-audit.sh reads it to know which posture to assert.
+    GALENA_FORWARD_UPSTREAMS = join(" ", var.forward_tls_upstreams)
   }
 
   # Per-zone URL and floor, consumed by rpz-update.sh.

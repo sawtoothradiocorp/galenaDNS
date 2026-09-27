@@ -166,6 +166,75 @@ variable "acme_staging" {
 # Blocklists (RPZ)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Resolution posture
+# ---------------------------------------------------------------------------
+# This is the single most consequential privacy decision in the whole project,
+# so the reasoning lives here rather than only in PRIVACY.md.
+#
+# Full recursion (forward_tls_upstreams = []) talks to the root, the TLD and the
+# domain's own nameservers in CLEARTEXT on port 53. No third-party resolver is
+# involved — but the hosting provider, who also sees every client IP arriving on
+# 443/853, sees every query name leaving on 53. They hold both halves of the
+# identifying pair, and qname-minimisation does not help against them: it limits
+# what each nameserver in the chain learns, while a network observer watches the
+# whole chain and reassembles the name.
+#
+# Forwarding over DoT splits those halves across two parties who would have to
+# collude. The provider keeps client IPs and sees only ciphertext leaving; the
+# upstream sees query names attributed to this node's single address and never
+# sees a client. Neither can reconstruct who asked what.
+#
+# The cost is independence: the upstream's blocking policy applies and this
+# resolver's allowlist cannot override it, because an upstream NXDOMAIN never
+# reaches the RPZ machinery. See README "Overriding an upstream block".
+variable "forward_tls_upstreams" {
+  description = <<-EOT
+    Upstreams unbound forwards the root zone to, over DNS-over-TLS, as unbound
+    forward-addr values: ADDRESS@PORT#TLS-AUTH-NAME.
+
+    The #name is mandatory (enforced below) because without it unbound does
+    opportunistic TLS — encrypted but unauthenticated, which a network-position
+    adversary can trivially intercept. With it, the upstream certificate must
+    match, so the encryption is worth something.
+
+    Defaults to Quad9's FILTERED endpoint, which blocks malware, phishing and C2
+    from commercial threat intelligence. That is why no domain-reputation feed
+    appears in rpz_blocklists. Alternatives:
+      dns10.quad9.net  9.9.9.10 / 149.112.112.10 / 2620:fe::10  — no filtering
+      dns11.quad9.net  9.9.9.11 / 149.112.112.11 / 2620:fe::11  — filtering + ECS
+    Use dns10 if you would rather own the entire blocking policy yourself; then
+    add a malware feed back to rpz_blocklists.
+
+    Set to [] for full recursion from the root. DNSSEC is validated locally
+    either way, so the upstream is never trusted to tell the truth — only to
+    relay. Both postures are asserted at runtime by `make audit`.
+  EOT
+  type        = list(string)
+  default = [
+    "9.9.9.9@853#dns.quad9.net",
+    "149.112.112.112@853#dns.quad9.net",
+    "2620:fe::fe@853#dns.quad9.net",
+    "2620:fe::9@853#dns.quad9.net",
+  ]
+
+  validation {
+    condition = alltrue([
+      for u in var.forward_tls_upstreams :
+      can(regex("^[0-9a-fA-F.:]+@[0-9]+#[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$", u))
+    ])
+    error_message = "each forward_tls_upstreams entry must be ADDRESS@PORT#TLS-AUTH-NAME, e.g. 9.9.9.9@853#dns.quad9.net. The #name is required: without it unbound falls back to unauthenticated TLS."
+  }
+
+  validation {
+    condition = alltrue([
+      for u in var.forward_tls_upstreams :
+      tonumber(split("#", split("@", u)[1])[0]) == 853
+    ])
+    error_message = "forward_tls_upstreams must use port 853. Forwarding on 53 would send query names in cleartext, which defeats the entire reason for forwarding."
+  }
+}
+
 variable "rpz_blocklists" {
   description = <<-EOT
     Ordered list of RPZ blocklist zones. ORDER IS SEMANTIC: unbound applies policy
@@ -191,16 +260,21 @@ variable "rpz_blocklists" {
       url         = "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/rpz/pro.txt"
       min_entries = 300000
     },
-    {
-      # Malware, phishing, scams, command-and-control. ~1,747,000 entries.
-      # Swap to rpz/tif.mini.txt (~401,000) if this proves too noisy or too large.
-      name        = "threat"
-      url         = "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/rpz/tif.medium.txt"
-      min_entries = 1000000
-    },
+    # Domain-reputation malware blocking is deliberately NOT here. It is done by
+    # the upstream in var.forward_tls_upstreams, whose commercial threat feeds are
+    # better and fresher than any free aggregated list, and whose 1.75M entries
+    # were the single largest claim on this node's RAM. Set forward_tls_upstreams
+    # to [] and you lose malware blocking unless you add a feed back here:
+    #   { name = "threat", url = ".../rpz/tif.medium.txt", min_entries = 1000000 }
+    # (or rpz/tif.mini.txt, ~401,000 entries, for a smaller node).
     {
       # Response-IP triggers: blocks resolution TO known-malicious IPs regardless
       # of the domain asked for. Requires `respip` in unbound's module-config.
+      #
+      # Kept even though malware blocking moved upstream, because no
+      # domain-reputation feed can do this: it catches a brand-new or compromised
+      # domain pointing at known C2 infrastructure. 72,000 entries / 2.3 MB, so
+      # it costs ~3% of what the domain feed did.
       name        = "threatip"
       url         = "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/rpz/tif-ips.txt"
       min_entries = 20000
@@ -313,15 +387,23 @@ variable "rate_limit_exempt_cidrs" {
 # ---------------------------------------------------------------------------
 
 variable "unbound_msg_cache_size" {
-  description = "unbound msg-cache-size. Sized deliberately because ~2.26M RPZ entries already claim roughly 0.9-1.2 GB."
+  description = <<-EOT
+    unbound msg-cache-size. Doubled from 128m when the 1.75M-entry domain malware
+    feed moved upstream: RPZ now claims roughly 250 MB rather than 0.9-1.2 GB, and
+    cache is what stands between a query and an upstream round trip.
+
+    Deliberately conservative. Measure actual RSS with `make audit` before going
+    higher — there is likely room for 512m/1024m on a 4 GB node, but free RAM is
+    not wasted RAM and unbound_memory_max is a cap, not a target.
+  EOT
   type        = string
-  default     = "128m"
+  default     = "256m"
 }
 
 variable "unbound_rrset_cache_size" {
   description = "unbound rrset-cache-size. Convention is roughly double msg-cache-size."
   type        = string
-  default     = "256m"
+  default     = "512m"
 }
 
 variable "unbound_memory_max" {

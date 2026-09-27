@@ -116,7 +116,7 @@ else
 fi
 
 # ===========================================================================
-section "3. unbound runtime configuration and recursion"
+section "3. unbound runtime configuration and resolution posture"
 # ===========================================================================
 # Asserted against the RUNNING daemon, not the file on disk, so a config that was
 # edited but never reloaded cannot pass.
@@ -182,47 +182,135 @@ else
   pass "no ECS options configured"
 fi
 
-# --- Recursion integrity -----------------------------------------------------
+# --- Resolution posture ------------------------------------------------------
 # These exist because this audit once passed 46/46 while the resolver was
-# forwarding every query to the hosting provider's resolvers. Debian's
-# unbound-resolvconf.service injects a root forward zone at RUNTIME via
-# unbound-control, so it appears in no config file and a config review cannot
-# see it. Only the running daemon knows.
+# forwarding every query to the hosting provider's resolvers in cleartext.
+# Debian's unbound-resolvconf.service injects a root forward zone at RUNTIME via
+# unbound-control, so it appears in no config file and a config review cannot see
+# it. Only the running daemon knows.
+#
+# So the question is not "is there a forwarder" — with forward_tls_upstreams set
+# there is supposed to be one. The question is whether the forwarder is the one we
+# chose, reached over authenticated TLS, with no silent cleartext fallback.
 
+ucfg=/etc/unbound/unbound.conf
 fwd=$(unbound-control list_forwards 2>/dev/null | grep -vE '^[[:space:]]*$' || true)
-if [[ -n $fwd ]]; then
-  fail "unbound has no forwarders" "forwarding to: $(tr '\n' ' ' <<< "$fwd")"
-  note "every query name is being sent to a third party; this is not a recursive resolver"
-else
-  pass "unbound has no forwarders" "resolves from the root"
+upstreams=${GALENA_FORWARD_UPSTREAMS:-}
+
+node_addrs=$( { ip -4 -o addr show scope global; ip -6 -o addr show scope global; } 2>/dev/null \
+  | awk '{print $4}' | cut -d/ -f1 )
+
+# The behavioural test, used by both postures: ask an authoritative server which
+# address it sees. This is how the original cleartext-forwarding bug was found,
+# and it is the only check here that cannot be satisfied by a convincing config.
+seen=$(dig +short +time=8 +tries=2 TXT o-o.myaddr.l.google.com @127.0.0.1 2>/dev/null | tr -d '"' | head -1)
+if [[ -z $seen ]]; then
+  seen=$(dig +short +time=8 +tries=2 TXT whoami.ds.akahelp.net @127.0.0.1 2>/dev/null \
+    | tr -d '"' | tr ' ' '\n' | grep -vx ns | head -1)
 fi
 
+if [[ -n $upstreams ]]; then
+  # ---- Forwarding posture -------------------------------------------------
+  if [[ -z $fwd ]]; then
+    fail "forward zone matches configuration" "configured to forward, but unbound has none"
+    note "it is recursing in cleartext instead — the provider sees every query name"
+  else
+    matched=0 total=0
+    for u in $upstreams; do
+      total=$((total + 1))
+      # Either the address or the #tls-auth-name is enough. Matching on both
+    # forms means a difference in list_forwards' output format cannot fail this,
+    # while provider resolvers injected by resolvconf match neither.
+    if grep -qF "${u%%@*}" <<< "$fwd" || { [[ $u == *#* ]] && grep -qF "${u##*#}" <<< "$fwd"; }; then
+      matched=$((matched + 1))
+    fi
+    done
+    if ((matched == 0)); then
+      fail "forward zone matches configuration" "running forwarders match none of the configured upstreams"
+      note "configured: ${upstreams}"
+      note "running:    $(tr '\n' ' ' <<< "$fwd")"
+      note "most likely unbound-resolvconf came back and replaced our upstreams"
+    elif ((matched < total)); then
+      warn "forward zone matches configuration" "${matched}/${total} configured upstreams present"
+    else
+      pass "forward zone matches configuration" "${matched}/${total} upstreams"
+    fi
+  fi
+
+  if grep -qE '^\s*forward-tls-upstream:\s*yes' "$ucfg"; then
+    pass "upstream transport is TLS" "query names are encrypted in transit"
+  else
+    fail "upstream transport is TLS" "forward-tls-upstream is not yes"
+    note "query names are leaving this host in cleartext on port 53"
+  fi
+
+  # Without #tls-auth-name unbound does opportunistic TLS: encrypted, but the
+  # certificate is not checked, so anyone in a network position can intercept.
+  n_addr=$(grep -cE '^\s*forward-addr:' "$ucfg" || true)
+  n_auth=$(grep -E '^\s*forward-addr:' "$ucfg" | grep -c '#' || true)
+  if ((n_addr > 0)) && ((n_auth == n_addr)); then
+    pass "upstream certificates are verified" "${n_auth}/${n_addr} carry #tls-auth-name"
+  else
+    fail "upstream certificates are verified" "only ${n_auth}/${n_addr} forward-addr carry #tls-auth-name"
+    note "TLS without an auth name is unauthenticated and interceptable"
+  fi
+
+  if grep -qE '^\s*forward-first:\s*no' "$ucfg"; then
+    pass "no cleartext fallback" "an unreachable upstream SERVFAILs rather than recursing"
+  else
+    fail "no cleartext fallback" "forward-first is not 'no'"
+    note "unbound will recurse in cleartext whenever the upstream is unreachable"
+  fi
+
+  # Positive evidence of a live DoT session. Idle is legitimate, so this warns
+  # rather than fails: unbound closes upstream connections when traffic is quiet.
+  dot=$(ss -tnH state established 2>/dev/null | awk '{print $4}' | grep -c ':853$' || true)
+  if ((dot > 0)); then
+    pass "live DoT session to upstream" "${dot} established connection(s) on 853"
+  else
+    warn "live DoT session to upstream" "none established right now (normal when idle)"
+  fi
+
+  # Under forwarding, an authoritative server must NOT see this node: it should
+  # see the upstream. Seeing ourselves means we are recursing despite the config.
+  if [[ -z $seen ]]; then
+    warn "recursion is not happening here" "could not reach an egress-reporting authoritative server"
+  elif grep -qxF "$seen" <<< "$node_addrs"; then
+    fail "recursion is not happening here" "authoritative servers see ${seen}, which IS this node"
+    note "queries are being resolved locally in cleartext, not forwarded over TLS"
+  else
+    pass "recursion is not happening here" "authoritative servers see ${seen} (the upstream)"
+  fi
+
+  note "the upstream sees every query name — see PRIVACY.md, this is the trade"
+else
+  # ---- Full recursion posture ---------------------------------------------
+  if [[ -n $fwd ]]; then
+    fail "unbound has no forwarders" "forwarding to: $(tr '\n' ' ' <<< "$fwd")"
+    note "every query name is being sent to a third party; this is not a recursive resolver"
+  else
+    pass "unbound has no forwarders" "resolves from the root"
+  fi
+
+  if [[ -z $seen ]]; then
+    warn "recursion egress is this host" "could not reach an egress-reporting authoritative server"
+  elif grep -qxF "$seen" <<< "$node_addrs"; then
+    pass "recursion egress is this host" "authoritative servers see ${seen}"
+  else
+    fail "recursion egress is this host" "authoritative servers see ${seen}, which is NOT an address of this node"
+    note "our addresses: $(tr '\n' ' ' <<< "$node_addrs")"
+    note "queries are leaving through someone else's resolver"
+  fi
+fi
+
+# Masked in both postures: it would replace a deliberate TLS upstream with the
+# provider's cleartext resolvers just as readily as it would break recursion.
 rcstate=$(systemctl is-enabled unbound-resolvconf.service 2>&1 || true)
 case $rcstate in
   masked) pass "unbound-resolvconf is masked" ;;
   *"No such file"* | *"not found"*) pass "unbound-resolvconf is masked" "unit not present" ;;
   *) fail "unbound-resolvconf is masked" "state is '${rcstate}' — it will re-add forwarders on the next resolvconf update" ;;
 esac
-
-# The behavioural test: ask an authoritative server which address it sees.
-# A forwarder shows up here as somebody else's IP, which is exactly how the
-# original failure was found.
-node_addrs=$( { ip -4 -o addr show scope global; ip -6 -o addr show scope global; } 2>/dev/null \
-  | awk '{print $4}' | cut -d/ -f1 )
-seen=$(dig +short +time=8 +tries=2 TXT o-o.myaddr.l.google.com @127.0.0.1 2>/dev/null | tr -d '"' | head -1)
-if [[ -z $seen ]]; then
-  seen=$(dig +short +time=8 +tries=2 TXT whoami.ds.akahelp.net @127.0.0.1 2>/dev/null \
-    | tr -d '"' | tr ' ' '\n' | grep -vx ns | head -1)
-fi
-if [[ -z $seen ]]; then
-  warn "recursion egress is this host" "could not reach an egress-reporting authoritative server"
-elif grep -qxF "$seen" <<< "$node_addrs"; then
-  pass "recursion egress is this host" "authoritative servers see ${seen}"
-else
-  fail "recursion egress is this host" "authoritative servers see ${seen}, which is NOT an address of this node"
-  note "our addresses: $(tr '\n' ' ' <<< "$node_addrs")"
-  note "queries are leaving through someone else's resolver"
-fi
 
 # ===========================================================================
 section "4. Response policy zones"
@@ -404,6 +492,11 @@ if [[ -d /var/log/unattended-upgrades ]]; then
   pass "unattended-upgrades logs contain no client data" "package names only"
 fi
 note "RPZ zone files are blocklists we installed, not records of anything asked"
+if [[ -n ${GALENA_FORWARD_UPSTREAMS:-} ]]; then
+  note "nothing about a query is retained HERE, but the upstream receives every"
+  note "query name: ${GALENA_FORWARD_UPSTREAMS%% *} and peers. Their retention is their"
+  note "policy, not ours, and this audit cannot verify it. See PRIVACY.md."
+fi
 
 # ===========================================================================
 section "10. Empirical test: does a query reach the disk?"
@@ -470,7 +563,7 @@ d_rss=$(ps -o rss= -C dnsdist 2>/dev/null | awk '{s+=$1} END{print s+0}')
 printf '       unbound %s MB | dnsdist %s MB | available %s MB of %s MB\n' \
   "$((u_rss / 1024))" "$((d_rss / 1024))" "$((mem_avail / 1024))" "$((mem_total / 1024))"
 if ((mem_avail < 262144)); then
-  warn "sufficient free memory" "under 256 MB available — consider rpz/tif.mini.txt"
+  warn "sufficient free memory" "under 256 MB available — lower the unbound cache sizes"
 else
   pass "sufficient free memory"
 fi

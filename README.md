@@ -1,12 +1,15 @@
 # galena-dns
 
 A public, non-logging, ad/tracker/malware-blocking encrypted DNS resolver on
-Hetzner Cloud. Terraform for the infrastructure, dnsdist for the encrypted
-front end, unbound for full recursion from the root.
+Hetzner Cloud. Terraform for the infrastructure, dnsdist for the encrypted front
+end, unbound for DNSSEC validation and policy, forwarding upstream over
+authenticated DNS-over-TLS.
 
 Speaks **DoH**, **DoH3**, **DoT** and **DoQ**. Nothing listens on port 53.
-Nothing about a query reaches disk, and `make audit` proves it on the running
-server rather than asking you to trust the config.
+Nothing about a query reaches disk *here*, and `make audit` proves it on the
+running server rather than asking you to trust the config. Queries do reach an
+upstream resolver, which is a deliberate trade — see "Design choices" and
+PRIVACY.md, where it is the first thing disclosed.
 
 See [PRIVACY.md](PRIVACY.md) for exactly what is and is not retained.
 
@@ -17,16 +20,26 @@ See [PRIVACY.md](PRIVACY.md) for exactly what is and is not retained.
 ```
         DoH  443/tcp ─┐
         DoH3 443/udp ─┤
-        DoT  853/tcp ─┼──►  dnsdist  ──►  unbound  ──►  the root, then TLDs,
-        DoQ  853/udp ─┘   (TLS, rate     (recursion,     then the domain itself
-                           limiting)      DNSSEC, RPZ)
+        DoT  853/tcp ─┼──►  dnsdist  ──►  unbound  ──►  Quad9 over DoT 853
+        DoQ  853/udp ─┘   (TLS, rate     (DNSSEC, RPZ,    (dns.quad9.net,
+                           limiting)      forwarding)      malware filtering)
                                               │
-                                    allowlist ▸ ads ▸ malware ▸ malicious IPs
+                                    allowlist ▸ ads ▸ malicious IPs
 ```
 
 unbound binds `127.0.0.1:53` and `[::1]:53` only, so "port 53 is closed" is true
-by construction and not merely by firewall rule. There is no forwarding to any
-third-party resolver anywhere in the configuration.
+by construction and not merely by firewall rule.
+
+**Resolution posture.** unbound forwards the root zone to Quad9 over authenticated
+DNS-over-TLS rather than recursing from the root. That is a deliberate privacy
+trade and the reasoning is in `terraform/variables.tf` above
+`forward_tls_upstreams`, in PRIVACY.md, and summarised under "Design choices"
+below. In one line: recursion is cleartext, so it hands the hosting provider every
+query name on top of the client IPs it already sees, while forwarding over TLS
+splits those two halves between two parties who would have to collude.
+
+Set `forward_tls_upstreams = []` for full recursion with no third party. DNSSEC is
+validated locally either way, so the upstream is only ever trusted to relay.
 
 ## Prerequisites
 
@@ -212,14 +225,35 @@ hostname to `base.dns.swthrc.com`.
 
 ## Blocking
 
-Four policy zones, applied in this order, first match wins:
+Blocking happens in two places, and the difference matters because only one of
+them is yours to override.
+
+**Locally, as RPZ** — three policy zones, applied in this order, first match wins:
 
 | Zone | Source | Entries | Blocks |
 |---|---|---|---|
 | `allowlist` | `node/unbound/rpz/allowlist.rpz` | yours (empty by default) | overrides everything below |
 | `adblock` | Hagezi Pro | ~456,000 | ads, trackers, telemetry |
-| `threat` | Hagezi TIF medium | ~1,747,000 | malware, phishing, scams, C2 |
-| `threatip` | Hagezi TIF IPs | ~60,000 | resolution *to* malicious IPs |
+| `threatip` | Hagezi TIF IPs | ~72,000 | resolution *to* malicious IPs |
+
+**Upstream, at Quad9** — malware, phishing and C2 domains, from commercial threat
+intelligence updated continuously.
+
+Domain-reputation malware blocking used to be a fourth local zone (Hagezi TIF
+medium, ~1,747,000 entries). It moved upstream for two reasons: Quad9's feeds are
+fresher and drawn from sources no free list has, and those 1.75M entries were the
+single largest claim on a 4 GB node's RAM — roughly 0.9-1.2 GB of RPZ became about
+250 MB, which is why `unbound_msg_cache_size` and `unbound_rrset_cache_size` could
+double.
+
+`threatip` stayed local on purpose. It triggers on the *answer*, blocking
+resolution to known command-and-control addresses whatever domain was asked for,
+which catches brand-new and compromised domains that no domain-reputation feed
+knows about yet. Quad9 filters by domain and does not replace this. At 72,000
+entries it costs about 3% of what the domain feed did.
+
+The cost of the move is that **you cannot allowlist around an upstream block** —
+see "Overriding an upstream block" below.
 
 Order is not cosmetic. In RPZ a `PASSTHRU` is itself a match, and a match stops
 unbound evaluating any later zone — so the allowlist only works because it is
@@ -247,17 +281,53 @@ shared CDN address. The format is `prefixlength.reversed-octets.rpz-ip`, so
 32.42.113.0.203.rpz-ip CNAME rpz-passthru.
 ```
 
+### Overriding an upstream block
+
+The allowlist cannot undo a block made by Quad9. An upstream NXDOMAIN arrives as
+an answer, so it never reaches response-policy processing and `rpz-passthru` has
+nothing to act on. Confirm that is what you are looking at before reaching for
+this — a local block and an upstream block both look like NXDOMAIN:
+
+```sh
+# On the node. If this answers but the resolver does not, the block is upstream.
+dig +short @9.9.9.10 example.com          # Quad9 unfiltered
+dig +short @127.0.0.1 example.com         # what we serve
+```
+
+The remedy is to forward that one name to Quad9's unfiltered endpoint, in
+`node/unbound/unbound.conf.tmpl`, then `make deploy`:
+
+```
+forward-zone:
+    name: "example.com"
+    forward-tls-upstream: yes
+    forward-first: no
+    forward-addr: 9.9.9.10@853#dns10.quad9.net
+    forward-addr: 2620:fe::10@853#dns10.quad9.net
+```
+
+A more specific `forward-zone` wins over `.`, so only that name bypasses
+filtering. Everything else stays filtered. Note that this is a manual operator
+action with a deploy behind it, not something the allowlist does for you — that is
+the real cost of moving malware blocking upstream. If you would rather never be in
+this position, set `forward_tls_upstreams` to Quad9's unfiltered endpoint
+(`dns10.quad9.net`) and add a malware feed back to `rpz_blocklists`, which puts the
+entire blocking policy back in your hands.
+
+You can also report a false positive to Quad9, who run a remediation process, but
+that is their timeline and not yours.
+
 ### Live triage
 
 ```sh
-unbound-control rpz_disable threat.rpz.galena     # drop one layer, no restart
-unbound-control rpz_enable  threat.rpz.galena
+unbound-control rpz_disable adblock.rpz.galena    # drop one layer, no restart
+unbound-control rpz_enable  adblock.rpz.galena
 unbound-control auth_zone_reload allowlist.rpz.galena
 ```
 
-If the threat feed is too aggressive for you, swap `rpz/tif.medium.txt` for
-`rpz/tif.mini.txt` (~401,000 entries) in `rpz_blocklists`, or set
-`enable_threat_ip_blocking = false` to drop just the response-IP layer.
+Set `enable_threat_ip_blocking = false` to drop the response-IP layer, which is the
+most false-positive-prone of the local zones — one shared CDN address in the feed
+takes out every site behind it.
 
 ### Updates
 
@@ -279,12 +349,23 @@ with fewer than `min_entries` records.
 1. **Sockets** — nothing on port 53 except loopback; all four transports bound.
 2. **Logging** — journald `Storage=volatile`; no `/var/log/journal`; rsyslog,
    syslog-ng, auditd and sysstat not installed; no `log` statement in nftables.
-3. **unbound runtime and recursion** — queries the *running* daemon via
+3. **unbound runtime and resolution posture** — queries the *running* daemon via
    `unbound-control get_option` for all 14 privacy settings, so a config edited
    but never reloaded cannot pass. Confirms ECS is not loaded and not echoed to
-   clients. Then three recursion-integrity checks: no forward zone,
-   `unbound-resolvconf` masked, and a behavioural test that asks an authoritative
-   server which address it sees and fails if it is not one of this node's.
+   clients. Then asserts the posture that is actually configured, in either
+   direction:
+   - forwarding: the running forward zone matches `forward_tls_upstreams`, the
+     transport is TLS, every upstream carries a `#tls-auth-name` so the
+     certificate is verified rather than opportunistic, `forward-first: no` so an
+     unreachable upstream cannot cause a silent cleartext fallback, and —
+     behaviourally — an authoritative server does *not* report this node's address
+   - full recursion (`forward_tls_upstreams = []`): no forward zone exists, and an
+     authoritative server *does* report this node's address
+
+   `unbound-resolvconf` must be masked in both, because it would replace a
+   deliberate TLS upstream with the provider's cleartext resolvers just as readily
+   as it would break recursion. These checks exist because the audit once passed
+   46/46 while the resolver was silently forwarding in cleartext to the provider.
 4. **Policy zones** — every zone has `rpz-log: no`, and the allowlist is first.
    Reports per-zone record counts and file sizes.
 5. **dnsdist** — config is free of every logging and remote-logging directive;
@@ -296,7 +377,8 @@ with fewer than `min_entries` records.
 8. **Host resolver** — `/etc/resolv.conf` points only at `127.0.0.1`, so the
    server's own lookups do not reach a third-party resolver, and is immutable.
 9. **Known on-disk data** — reports what *is* written (certbot and apt logs) rather
-   than staying quiet about it.
+   than staying quiet about it, and names the upstream that receives query names,
+   since "nothing reaches disk here" is only half the picture.
 10. **Empirical probe** — sends a query with a randomly generated name, then greps
     the writable filesystem and the journal for it. This is the check that catches
     what a config review misses.
@@ -338,6 +420,30 @@ checks structurally that the allowlist zone is evaluated first, which is the
 property that matters.
 
 ## Design choices
+
+**Forward over DoT instead of recursing.** The one decision worth reading twice,
+because the project originally did the opposite and PRIVACY.md now leads with it.
+
+Full recursion needs no third party, which sounds strictly better — but it speaks
+cleartext DNS on port 53. Resolving from the root means the hosting provider sees
+every query name, and they already see every client IP arriving on 443 and 853.
+One company holding both halves of the identifying pair is the worst available
+outcome, and `qname-minimisation` does not help: it limits what each nameserver in
+the chain learns, while a network observer watches the whole chain and reassembles
+the name from the parts.
+
+Forwarding to Quad9 over authenticated DoT splits those halves. The provider keeps
+client IPs and sees only ciphertext leaving; Quad9 gets query names attributed to
+this node's single address and never sees a client. Neither can reconstruct who
+asked what alone. Three things fall out of it: this node becomes a mixer, so users
+are more private against Quad9 than they would be querying Quad9 directly; a warm
+anycast cache usually answers faster than a cold recursion chain; and the 1.75M
+entry malware feed could move off the box, which is what freed the RAM for cache.
+
+What it costs is independence. Quad9's blocking policy applies and the allowlist
+cannot override it. DNSSEC is still validated *here*, so the upstream is trusted to
+relay and never to tell the truth — and `forward_tls_upstreams = []` reverts the
+whole decision in one line.
 
 **dnsdist 2.1 from repo.powerdns.com, not Debian.** Incoming DoQ and DoH3 landed
 in dnsdist 1.9.0 and need Cloudflare's quiche; Debian's package is far older. The
@@ -396,14 +502,21 @@ across a reboot there is no forensic trail. Use `journalctl -f` while reproducin
 
 ## Memory
 
-This is the binding constraint. ~2.26M RPZ entries across three zones is roughly
-0.9–1.2 GB resident, which is why the unbound caches are sized explicitly
-(`msg-cache-size: 128m`, `rrset-cache-size: 256m`) rather than left at defaults,
-and why `unbound.service` gets a `MemoryMax` so a runaway zone restarts unbound
-instead of letting the OOM killer pick sshd.
+This used to be the binding constraint. ~2.26M RPZ entries across three zones was
+roughly 0.9-1.2 GB resident, which forced the unbound caches down to `128m`/`256m`
+— blocklists were crowding out the thing that makes a resolver fast.
 
-`make audit` reports per-zone counts and process RSS so growth is visible before
-it hurts. On a 2 GB server type, `rpz/tif.mini.txt` is the required swap.
+Moving domain-reputation malware blocking upstream removed 1,747,000 of those
+entries. RPZ is now around 250 MB, and the caches doubled to `256m`/`512m`.
+
+That bump is deliberately conservative: there is likely room for `512m`/`1024m` on
+a 4 GB node, but free RAM is not wasted RAM, `unbound_memory_max` is a cap rather
+than a target, and nothing here has been measured under real load yet. Check
+`make audit` section 11 for actual RSS before raising it, and raise
+`unbound_memory_max` in the same change if you do.
+
+`unbound.service` keeps its `MemoryMax` so a runaway zone restarts unbound instead
+of letting the OOM killer pick sshd.
 
 ## Layout
 
@@ -432,6 +545,7 @@ scripts/            run from your machine: test-resolver.sh, make-mobileconfig.s
 | Debian | 13 (trixie) | unbound 1.26.1, certbot 4.0.0 |
 | dnsdist | 2.1.x | current stable; DoQ/DoH3 require ≥ 1.9.0 |
 | unbound | 1.26.1 (distro) | security-tracked by Debian; trixie has moved past the 1.22.0 it released with |
+| upstream resolver | `dns.quad9.net` | pinned by TLS auth name, not IP, so Quad9 can rotate addresses without breaking verification |
 
 ## Troubleshooting
 
@@ -445,10 +559,12 @@ scripts/            run from your machine: test-resolver.sh, make-mobileconfig.s
 | `bootstrap.sh` aborts on QUIC support | apt resolved dnsdist from Debian — check `apt-cache policy dnsdist` |
 | DoT/DoH work, DoQ/DoH3 hang for some users | ICMP being dropped upstream of the node, breaking path MTU discovery |
 | Everything resolves but nothing is blocked | Check `make audit` section 4; a feed may have failed validation |
-| A DNS leak test shows your provider's resolvers | unbound is forwarding rather than recursing. `unbound-control list_forwards` should be empty and `unbound-resolvconf.service` masked; `make audit` section 3 checks both |
+| A DNS leak test shows your provider's resolvers | `unbound-resolvconf` has replaced the configured upstream with the provider's cleartext resolvers. `unbound-control list_forwards` should show only `forward_tls_upstreams`; `make audit` section 3 checks that and that the service is masked |
 | Allowlist entries ignored | The allowlist zone is not first — `make audit` checks this |
 | TLS handshake fails after ~60 days | The deploy hook is not running; `certbot renew --dry-run` |
-| unbound OOMs or restarts | Swap `tif.medium.txt` for `tif.mini.txt`, or use a larger server type |
+| unbound OOMs or restarts | Lower `unbound_msg_cache_size`/`unbound_rrset_cache_size`, or use a larger server type. `make audit` section 11 reports RSS |
+| Everything SERVFAILs | The upstream is unreachable and `forward-first: no` means there is no cleartext fallback, by design. Check `ss -tn state established '( dport = :853 )'` on the node |
+| A site is blocked and the allowlist does not help | It is an upstream block, not a local one. See "Overriding an upstream block" |
 
 ```sh
 make ssh                                  # get onto the node

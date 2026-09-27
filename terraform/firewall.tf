@@ -2,8 +2,10 @@
 # ruleset cannot expose a port it does not allow. The host nftables ruleset
 # mirrors it — defence in depth, and the audit script checks both.
 #
-# No outbound rules are declared, which leaves egress unrestricted. That is
-# required: full recursion means talking to authoritative servers on port 53.
+# No outbound rules are declared, which leaves egress unrestricted. Upstream DNS
+# needs 853 outbound, ACME and the blocklist CDN need 443, and port 53 outbound is
+# needed both during cloud-init (before unbound exists) and by full recursion if
+# forward_tls_upstreams is ever emptied.
 resource "hcloud_firewall" "dns" {
   name   = "${var.project_name}-fw"
   labels = local.common_labels

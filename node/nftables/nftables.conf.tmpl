@@ -71,8 +71,9 @@ ${GALENA_NFT_ADMIN_RULES}
     }
 
     chain output {
-        # Egress stays open. Full recursion means reaching authoritative servers
-        # on port 53, and ACME/blocklist fetches need 443 outbound.
+        # Egress stays open: 853 for the upstream resolver, 443 for ACME and
+        # blocklist fetches, and 53 during cloud-init before unbound exists (and
+        # for full recursion if forward_tls_upstreams is emptied).
         type filter hook output priority filter; policy accept;
     }
 }

@@ -21,6 +21,7 @@ IP=""
 INCLUDE_RATELIMIT=0
 INSECURE=0
 DOH_PATH="/dns-query"
+MALWARE_CANARY=""
 declare -a FEEDS=()
 
 # Fixtures verified live on 2026-09-25. See README for how each was checked.
@@ -40,8 +41,11 @@ Usage: $0 --domain <fqdn> [--ip <addr>] [options]
   --domain FQDN         Public hostname of the resolver (must match its cert)
   --ip ADDR             Connect to this address instead of resolving DOMAIN.
                         Use it to test one specific node behind round-robin.
-  --feed URL            Blocklist feed to sample malware fixtures from.
-                        Repeatable. Defaults to Hagezi TIF medium.
+  --feed URL            Blocklist feed to sample blocked fixtures from.
+                        Repeatable. Defaults to Hagezi Pro (ads/trackers).
+  --malware-canary DOM  A domain the UPSTREAM resolver should block, to verify
+                        malware filtering now that it is upstream policy rather
+                        than a local feed. Skipped if not given.
   --allowlist FILE      Allowlist RPZ zone to read a test domain from.
                         Defaults to node/unbound/rpz/allowlist.rpz.
   --include-ratelimit   Also test rate limiting. This will get your address
@@ -56,6 +60,7 @@ while (($#)); do
     --domain) DOMAIN=$2; shift 2 ;;
     --ip) IP=$2; shift 2 ;;
     --feed) FEEDS+=("$2"); shift 2 ;;
+    --malware-canary) MALWARE_CANARY=$2; shift 2 ;;
     --doh-path) DOH_PATH=$2; shift 2 ;;
     --allowlist) ALLOWLIST_FILE=$2; shift 2 ;;
     --include-ratelimit) INCLUDE_RATELIMIT=1; shift ;;
@@ -69,7 +74,9 @@ done
   echo "--domain is required" >&2
   exit 2
 }
-((${#FEEDS[@]})) || FEEDS=("https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/rpz/tif.medium.txt")
+# Default tracks what is actually deployed: the ad/tracker feed. `make test`
+# overrides this with --feed from the rpz_feed_urls output anyway.
+((${#FEEDS[@]})) || FEEDS=("https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/rpz/pro.txt")
 if [[ -z $ALLOWLIST_FILE ]]; then
   ALLOWLIST_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/node/unbound/rpz/allowlist.rpz"
 fi
@@ -274,6 +281,22 @@ if have kdig; then
       fail "sampled domains blocked (${feed_name})" "only ${n_ok}/${n_tot} returned NXDOMAIN"
     fi
   done
+
+  # Domain-reputation malware blocking is done by the upstream resolver, not by a
+  # local feed, so there is nothing here to sample. There is also no published
+  # canary domain we can rely on, and inventing one would make this test lie —
+  # so it is opt-in. Pick a domain the upstream's own documentation says it
+  # blocks, pass it with --malware-canary, and this becomes a real assertion.
+  if [[ -n ${MALWARE_CANARY:-} ]]; then
+    rc=$(rcode_of "$(q_dot "$MALWARE_CANARY")")
+    if [[ $rc == NXDOMAIN ]]; then
+      pass "upstream blocks malware canary" "${MALWARE_CANARY} -> NXDOMAIN"
+    else
+      fail "upstream blocks malware canary" "${MALWARE_CANARY} -> ${rc:-no response}, expected NXDOMAIN"
+    fi
+  else
+    skip "upstream blocks malware canary" "pass --malware-canary DOMAIN to verify upstream filtering"
+  fi
 
   # Read a testable entry out of the allowlist zone. Wildcards and rpz-ip
   # triggers are skipped deliberately: querying a made-up label under a wildcard

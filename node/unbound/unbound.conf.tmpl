@@ -1,10 +1,15 @@
-# galena-dns — unbound recursive resolver
+# galena-dns — unbound validating resolver
 #
 # Rendered by bootstrap.sh; do not edit on the node, edit node/unbound/ and re-deploy.
 #
-# Role: full recursion from the root with DNSSEC validation, reachable only from
-# localhost. dnsdist owns the public listeners and forwards here. There is no
-# forwarding to any third-party resolver anywhere in this file.
+# Role: DNSSEC-validating resolver reachable only from localhost. dnsdist owns the
+# public listeners and forwards here.
+#
+# Resolution posture is set by var.forward_tls_upstreams and rendered into the
+# forward-zone block at the bottom of this file. Either it forwards the root zone
+# over authenticated DNS-over-TLS, or — with an empty list — it recurses from the
+# root in cleartext. DNSSEC is validated HERE in both cases, so an upstream is
+# only ever trusted to relay, never to tell the truth.
 
 server:
     # ---------------------------------------------------------------------
@@ -64,6 +69,11 @@ server:
     # send-client-subnet option is set anywhere. privacy-audit.sh asserts both,
     # and verifies a client sending ECS gets no ECS back.
 
+    # CA bundle for verifying upstream DoT certificates. Without this, a
+    # forward-addr carrying #tls-auth-name cannot be authenticated and unbound
+    # refuses to use it, so this line is load-bearing whenever forwarding is on.
+    tls-cert-bundle: "/etc/ssl/certs/ca-certificates.crt"
+
     # ---------------------------------------------------------------------
     # DNSSEC validation
     # ---------------------------------------------------------------------
@@ -80,14 +90,21 @@ server:
     # ---------------------------------------------------------------------
     # Upstream query privacy
     # ---------------------------------------------------------------------
+    # qname-minimisation limits what each nameserver in a recursion chain learns.
+    # It is worth much less than it looks against a network observer, who sees
+    # every step of the chain and reassembles the full name from the parts. It is
+    # also mostly moot while forwarding, since the full name goes to the upstream
+    # in one encrypted query. Kept on because it costs nothing and it matters
+    # again the moment forward_tls_upstreams is emptied.
     qname-minimisation: yes
     qname-minimisation-strict: no
     use-caps-for-id: no
 
     # ---------------------------------------------------------------------
     # Performance. Cache sizes are set deliberately rather than left at the
-    # defaults: the RPZ zones already claim roughly 0.9-1.2 GB of RSS, so the
-    # caches are what stands between this and the OOM killer on a 4 GB node.
+    # defaults. They were sized when RPZ claimed 0.9-1.2 GB of RSS; with the
+    # 1.75M-entry domain malware feed moved upstream that is down to roughly
+    # 250 MB, so these have room to grow. See var.unbound_msg_cache_size.
     # ---------------------------------------------------------------------
     num-threads: ${GALENA_NUM_THREADS}
     msg-cache-size: ${GALENA_UNBOUND_MSG_CACHE}
@@ -133,6 +150,16 @@ remote-control:
     control-interface: /run/unbound.ctl
     control-use-cert: no
 
+# Resolution posture, rendered by bootstrap.sh from GALENA_FORWARD_UPSTREAMS.
+# Empty when forward_tls_upstreams = [], which leaves unbound recursing.
+${GALENA_FORWARD_BLOCK}
+
 # Response policy zones are generated from the Terraform manifest, because order
 # is semantic: the allowlist must come first. See bin/rpz-update.sh.
+#
+# RPZ is evaluated on this node regardless of posture, so the allowlist and the
+# ad/tracker feed keep working while forwarding. What an allowlist CANNOT do is
+# reverse a block made by the upstream: that NXDOMAIN arrives as an answer and
+# never reaches response-policy processing. README documents the per-zone
+# forward escape hatch for that case.
 include-toplevel: "/etc/unbound/unbound.conf.d/galena-rpz.conf"

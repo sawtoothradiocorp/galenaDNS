@@ -269,10 +269,37 @@ install -d -m 0755 /etc/unbound/unbound.conf.d
   done
 } > /etc/unbound/unbound.conf.d/galena-rpz.conf
 
+# Resolution posture. GALENA_FORWARD_UPSTREAMS is deliberately allowed to be
+# empty (= recurse from the root), so it is NOT passed to require_vars; only the
+# rendered block is, and that always carries at least a comment.
+#
+# forward-first: no is the load-bearing line. With it, an unreachable upstream is
+# a SERVFAIL. Without it, unbound would quietly fall back to recursing — which
+# means cleartext query names on the wire at the exact moment nobody is looking.
+# A privacy posture that degrades silently is not a posture.
+if [[ -n ${GALENA_FORWARD_UPSTREAMS:-} ]]; then
+  GALENA_FORWARD_BLOCK=$(
+    echo "forward-zone:"
+    echo "    name: \".\""
+    echo "    forward-tls-upstream: yes"
+    echo "    forward-first: no"
+    for u in ${GALENA_FORWARD_UPSTREAMS}; do
+      echo "    forward-addr: ${u}"
+    done
+  )
+  n_up=$(wc -w <<< "${GALENA_FORWARD_UPSTREAMS}")
+  ok "forwarding over DoT to ${n_up} upstream(s): ${GALENA_FORWARD_UPSTREAMS}"
+else
+  GALENA_FORWARD_BLOCK="# No forward zone: unbound recurses from the root (forward_tls_upstreams = [])."
+  ok "full recursion from the root (no forwarding configured)"
+fi
+export GALENA_FORWARD_BLOCK
+
 # Debian ships its own config fragments; ours is the whole configuration.
 rm -f /etc/unbound/unbound.conf.d/root-auto-trust-anchor-file.conf
-require_vars GALENA_NUM_THREADS GALENA_CACHE_SLABS GALENA_UNBOUND_MSG_CACHE GALENA_UNBOUND_RRSET_CACHE
-envsubst '${GALENA_NUM_THREADS} ${GALENA_CACHE_SLABS} ${GALENA_UNBOUND_MSG_CACHE} ${GALENA_UNBOUND_RRSET_CACHE}' \
+require_vars GALENA_NUM_THREADS GALENA_CACHE_SLABS GALENA_UNBOUND_MSG_CACHE GALENA_UNBOUND_RRSET_CACHE \
+  GALENA_FORWARD_BLOCK
+envsubst '${GALENA_NUM_THREADS} ${GALENA_CACHE_SLABS} ${GALENA_UNBOUND_MSG_CACHE} ${GALENA_UNBOUND_RRSET_CACHE} ${GALENA_FORWARD_BLOCK}' \
   < "${REPO}/unbound/unbound.conf.tmpl" > /etc/unbound/unbound.conf
 
 install -d -m 0755 /etc/systemd/system/unbound.service.d
@@ -326,16 +353,50 @@ dig +short +time=3 +tries=1 @127.0.0.1 -p 53 nlnetlabs.nl A >/dev/null 2>&1 \
   || die "unbound is not answering on 127.0.0.1:53 — check: journalctl -u unbound"
 ok "unbound answering on loopback"
 
-# Belt and braces: clear any forward zone injected before the mask took effect,
-# then assert none remains. A forwarder here would mean queries leave this host
-# as plaintext DNS to a third party instead of being resolved from the root.
-unbound-control forward off >/dev/null 2>&1 || true
+# Verify the posture that was actually configured, because the failure mode in
+# both directions is silent. unbound-resolvconf (masked above) injects the
+# PROVIDER's resolvers as a root forward zone at runtime via unbound-control, in
+# cleartext, visible in no config file — so "is there a forwarder" is not the
+# question. "Is the forwarder the one we chose, over TLS" is.
 fwd=$(unbound-control list_forwards 2>/dev/null | grep -v '^[[:space:]]*$' || true)
-[[ -z $fwd ]] || die "unbound still has a forward zone configured, so it is NOT recursing:
+if [[ -n ${GALENA_FORWARD_UPSTREAMS:-} ]]; then
+  [[ -n $fwd ]] || die "unbound has no forward zone, but forward_tls_upstreams is set.
+It is therefore recursing in cleartext instead of forwarding over TLS, which is
+the opposite of the configured privacy posture. Check: unbound-checkconf"
+
+  grep -qE '^\s*forward-tls-upstream:\s*yes' /etc/unbound/unbound.conf \
+    || die "forward zone present but forward-tls-upstream is not yes — query names would leave in cleartext"
+  grep -qE '^\s*forward-first:\s*no' /etc/unbound/unbound.conf \
+    || die "forward-first is not 'no' — unbound would silently fall back to cleartext recursion when the upstream is unreachable"
+
+  matched=0 total=0
+  for u in ${GALENA_FORWARD_UPSTREAMS}; do
+    total=$((total + 1))
+    # Either the address or the #tls-auth-name is enough. Matching on both
+    # forms means a difference in list_forwards' output format cannot fail this,
+    # while provider resolvers injected by resolvconf match neither.
+    if grep -qF "${u%%@*}" <<< "$fwd" || { [[ $u == *#* ]] && grep -qF "${u##*#}" <<< "$fwd"; }; then
+      matched=$((matched + 1))
+    fi
+  done
+  ((matched > 0)) || die "unbound's forward zone matches none of the configured upstreams.
+  configured: ${GALENA_FORWARD_UPSTREAMS}
+  running:    $(tr '\n' ' ' <<< "$fwd")
+Something else set this — most likely unbound-resolvconf came back."
+  ((matched == total)) \
+    && ok "forwarding over authenticated DoT (${matched}/${total} upstreams active)" \
+    || warn "only ${matched}/${total} configured upstreams are in the running forward zone"
+else
+  # Full recursion: clear anything injected before the mask took effect, then
+  # assert nothing remains.
+  unbound-control forward off >/dev/null 2>&1 || true
+  fwd=$(unbound-control list_forwards 2>/dev/null | grep -v '^[[:space:]]*$' || true)
+  [[ -z $fwd ]] || die "unbound still has a forward zone configured, so it is NOT recursing:
   ${fwd}
 Something re-added it after unbound-resolvconf was masked. Investigate before
 serving traffic: this sends every query name to a third-party resolver."
-ok "no forwarders: unbound resolves from the root"
+  ok "no forwarders: unbound resolves from the root"
+fi
 
 # --------------------------------------------------------------------------
 # Host resolver
@@ -543,8 +604,8 @@ unbound_rss_kb=$(ps -o rss= -C unbound 2>/dev/null | awk '{s+=$1} END{print s+0}
 printf '    %s+%s unbound RSS %s MB, %s MB available\n' "$G" "$N" \
   "$((unbound_rss_kb / 1024))" "$((mem_avail_kb / 1024))"
 if ((mem_avail_kb < 262144)); then
-  warn "under 256 MB available. The threat feed is large; consider swapping"
-  warn "rpz/tif.medium.txt for rpz/tif.mini.txt in terraform.tfvars."
+  warn "under 256 MB available. Lower unbound_msg_cache_size and"
+  warn "unbound_rrset_cache_size in terraform.tfvars, or use a larger node."
 fi
 
 printf '\n%sgalena-dns is up on %s%s\n' "$B" "$GALENA_DOMAIN" "$N"
