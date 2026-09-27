@@ -19,7 +19,8 @@
 # Cost: nothing extra while assigned — the per-node $0.60/month IPv4 charge in
 # outputs.tf IS this Primary IP, and IPv6 Primary IPs are not billed at all. An
 # UNASSIGNED IPv4 keeps billing at $0.60/month, which is the price of keeping an
-# address alive while no server holds it.
+# address alive while no server holds it — minutes, during a node replacement.
+# `make destroy` and removing a node from var.nodes both delete the addresses.
 
 resource "hcloud_primary_ip" "ipv4" {
   for_each = var.nodes
@@ -32,10 +33,12 @@ resource "hcloud_primary_ip" "ipv4" {
   # same reason: a server deletion would take the address with it.
   auto_delete = false
 
-  # Belt and braces: an explicit delete — from the provider, a stray
-  # `terraform destroy`, or the console — errors instead of releasing an address
-  # clients may have typed in. `make destroy` has to lift this deliberately.
-  delete_protection = true
+  # No delete_protection, deliberately: the only IP-configured clients are the
+  # operator's own, so `make destroy` should release these cleanly rather than
+  # leave them billing unassigned. Revisit before publishing IP-based setup to
+  # anyone else — then an address outliving a destroy is the point. The
+  # destructive provider update this file was nearly bitten by is prevented by
+  # ignore_changes on the servers' public_net, not by protection.
 
   labels = merge(local.common_labels, { node = each.key })
 }
@@ -43,11 +46,10 @@ resource "hcloud_primary_ip" "ipv4" {
 resource "hcloud_primary_ip" "ipv6" {
   for_each = var.nodes
 
-  name              = "${var.project_name}-${each.key}-v6"
-  type              = "ipv6"
-  location          = each.value.location
-  auto_delete       = false
-  delete_protection = true
+  name        = "${var.project_name}-${each.key}-v6"
+  type        = "ipv6"
+  location    = each.value.location
+  auto_delete = false
 
   labels = merge(local.common_labels, { node = each.key })
 }
