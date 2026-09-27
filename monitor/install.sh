@@ -41,9 +41,12 @@ id galena-probe >/dev/null 2>&1 ||
   useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin galena-probe
 
 say "configuration"
-install -d -m 0750 -o root -g galena-probe /etc/galena-probe
-# Not secret — domain, node addresses, topic ARN — and readable by the admin
-# user so `make monitor-check` can dry-run without sudo.
+# 0755, not 0750: `make monitor-check` dry-runs as the admin user, who must be
+# able to traverse this to read probe.env. With 0750 root:galena-probe it could
+# not, and monitor-check printed nothing — found during the 2026-09-27 fire drill.
+# The key is protected by its own 0640 root:galena-probe, not by the directory.
+install -d -m 0755 -o root -g root /etc/galena-probe
+# Not secret — domain, node addresses, topic ARN.
 install -m 0644 -o root -g root "$SRC/probe.env" /etc/galena-probe/probe.env
 new_key=0
 if [[ -s "$SRC/aws.credentials" ]]; then

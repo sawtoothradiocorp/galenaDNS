@@ -239,6 +239,11 @@ address whose check is failing is not returned:
 
 `make nodes` prints the live numbers rather than these, so the two cannot drift.
 
+Measured in a fire drill on 2026-09-27, stopping dnsdist on `hel1-a`: all 16
+checkers failed within 1m39s, the address left Google's and Cloudflare's answers at
+2m09s and 2m39s, and the alarms fired at 5m05s. On restart it was back in DNS within
+about 2m35s. BACKLOG section 1 has the full timeline.
+
 Terraform state holds the configuration, not Route 53's verdict, so to ask what it
 actually thinks right now:
 

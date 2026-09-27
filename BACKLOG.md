@@ -31,11 +31,27 @@ already holding the zone.
 Installed on mtbaldy on 2026-09-27: first run 14/14 OK, test alert published,
 heartbeat in CloudWatch, `probe-silent` cleared to OK, all four node alarms OK.
 
-**Still to prove:** that a real failure alerts. Stopping dnsdist on one node for
-~10 minutes should produce a prober FAIL email, the node's two `-dot-down`
-alarms, a withdrawn address, and then recovery emails for all of it. Until that
-has been seen, the failure path is tested only in pieces — the state machine
-with scripted inputs, verification with a wrong hostname — not end to end.
+**Fire drill, 2026-09-27: passed.** dnsdist stopped on `hel1-a` for 6m11s while
+`fsn1-a` was checked for DoT every 20 seconds as a safety stop (it never failed):
+
+| From stop | Event |
+|---|---|
+| +1:09 | first Route 53 checkers fail |
+| +1:39 | 0/16 healthy on both families |
+| +2:09 / +2:39 | `hel1-a` gone from Google / Cloudflare answers |
+| ~+1 and ~+6 | two prober runs record FAIL, publish no heartbeat |
+| +5:05 | both `hel1-a-*-dot-down` alarms fire |
+| +6:11 | dnsdist started |
+| +7:48 | 16/16 healthy again, both families |
+| +8:16 / +8:46 | back in Google / Cloudflare answers |
+| +10:12 | both alarms clear |
+| ~+11 | prober run passes; heartbeat resumes |
+
+The heartbeat gap was 15 minutes, under `probe-silent`'s 20, so that alarm rightly
+stayed quiet — for an outage this short the prober's own FAIL email is the alert.
+Clients were never without a node. The drill also found a bug: `/etc/galena-probe`
+was installed `0750 root:galena-probe`, so `make monitor-check` could not read
+`probe.env` and printed nothing. Fixed in install.sh.
 
 ### Still not covered
 
