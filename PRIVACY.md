@@ -81,7 +81,10 @@ differ in who decides and in whether it can be overridden.
    evaluated first so it overrides everything below it. Ships empty: nothing is
    exempt from filtering unless you add it.
 2. **Ads and trackers** — Hagezi Pro, ~456,000 domains.
-3. **Malicious response IPs** — Hagezi TIF IPs, ~72,000 entries, blocking
+3. **Malware, phishing and C2** — Hagezi TIF mini, ~401,000 domains. Runs in
+   addition to the upstream's own malware filtering, not instead of it: the two
+   lists were measured to disagree often, so both are applied.
+4. **Malicious response IPs** — Hagezi TIF IPs, ~72,000 entries, blocking
    resolution *to* known-bad addresses whatever domain was asked for. Kept locally
    because no domain-reputation feed can do this: it catches a brand-new or
    compromised domain pointing at known command-and-control infrastructure.

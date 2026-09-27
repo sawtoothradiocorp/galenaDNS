@@ -260,21 +260,35 @@ variable "rpz_blocklists" {
       url         = "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/rpz/pro.txt"
       min_entries = 300000
     },
-    # Domain-reputation malware blocking is deliberately NOT here. It is done by
-    # the upstream in var.forward_tls_upstreams, whose commercial threat feeds are
-    # better and fresher than any free aggregated list, and whose 1.75M entries
-    # were the single largest claim on this node's RAM. Set forward_tls_upstreams
-    # to [] and you lose malware blocking unless you add a feed back here:
-    #   { name = "threat", url = ".../rpz/tif.medium.txt", min_entries = 1000000 }
-    # (or rpz/tif.mini.txt, ~401,000 entries, for a smaller node).
+    {
+      # Malware, phishing, scams, C2. ~401,000 entries.
+      #
+      # This is the MINI feed, not the medium one, and it is deliberately
+      # belt-and-braces with the upstream rather than a replacement for it.
+      # Measured after the switch to Quad9: of 57 domains sampled from Hagezi TIF
+      # medium, Quad9's filtered endpoint blocked 9 and the other 48 resolved
+      # through both Quad9 and Google. The two lists are not equivalent, and that
+      # measurement cannot say which is right — Quad9 may be more precise, Hagezi
+      # may have broader coverage — so running both is the honest answer.
+      #
+      # Mini rather than medium because medium's 1.75M entries cost ~0.9-1.2 GB
+      # and were what forced the caches down to 128m/256m. Mini is a fifth of that.
+      #
+      # A local block also behaves better than an upstream one: it returns a clean
+      # NXDOMAIN, where an upstream block on a DNSSEC-signed zone surfaces as
+      # SERVFAIL because our validator rejects the forged denial, and some clients
+      # retry SERVFAIL against a fallback resolver. See README.
+      name        = "threat"
+      url         = "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/rpz/tif.mini.txt"
+      min_entries = 250000
+    },
     {
       # Response-IP triggers: blocks resolution TO known-malicious IPs regardless
       # of the domain asked for. Requires `respip` in unbound's module-config.
       #
-      # Kept even though malware blocking moved upstream, because no
-      # domain-reputation feed can do this: it catches a brand-new or compromised
-      # domain pointing at known C2 infrastructure. 72,000 entries / 2.3 MB, so
-      # it costs ~3% of what the domain feed did.
+      # Neither a domain feed nor the upstream can do this: it catches a
+      # brand-new or compromised domain pointing at known C2 infrastructure,
+      # whatever the domain is. 72,000 entries / 2.3 MB.
       name        = "threatip"
       url         = "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/rpz/tif-ips.txt"
       min_entries = 20000

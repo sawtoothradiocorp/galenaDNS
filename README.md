@@ -235,32 +235,30 @@ hostname to `base.dns.swthrc.com`.
 Blocking happens in two places, and the difference matters because only one of
 them is yours to override.
 
-**Locally, as RPZ** — three policy zones, applied in this order, first match wins:
+**Locally, as RPZ** — four policy zones, applied in this order, first match wins:
 
 | Zone | Source | Entries | Blocks |
 |---|---|---|---|
 | `allowlist` | `node/unbound/rpz/allowlist.rpz` | yours (empty by default) | overrides everything below |
 | `adblock` | Hagezi Pro | ~456,000 | ads, trackers, telemetry |
+| `threat` | Hagezi TIF **mini** | ~401,000 | malware, phishing, scams, C2 |
 | `threatip` | Hagezi TIF IPs | ~72,000 | resolution *to* malicious IPs |
 
 **Upstream, at Quad9** — malware, phishing and C2 domains, from commercial threat
 intelligence updated continuously.
 
-Domain-reputation malware blocking used to be a fourth local zone (Hagezi TIF
-medium, ~1,747,000 entries). It moved upstream for two reasons: Quad9's feeds are
-fresher and drawn from sources no free list has, and those 1.75M entries were the
-single largest claim on a 4 GB node's RAM — roughly 0.9-1.2 GB of RPZ became about
-250 MB, which is why `unbound_msg_cache_size` and `unbound_rrset_cache_size` could
-double.
+Malware is blocked in both places on purpose, because the measurement below showed
+the two catch different things. The local feed is the **mini** list rather than the
+medium one that used to be here: medium's 1,747,000 entries cost roughly 0.9-1.2 GB
+and were what forced the caches down to 128m/256m. Mini is about a fifth of that.
 
-`threatip` stayed local on purpose. It triggers on the *answer*, blocking
-resolution to known command-and-control addresses whatever domain was asked for,
-which catches brand-new and compromised domains that no domain-reputation feed
-knows about yet. Quad9 filters by domain and does not replace this. At 72,000
-entries it costs about 3% of what the domain feed did.
+`threatip` is local because nothing else can do it. It triggers on the *answer*,
+blocking resolution to known command-and-control addresses whatever domain was
+asked for, which catches brand-new and compromised domains no domain-reputation
+feed knows about yet. Quad9 filters by domain and does not replace it.
 
-The cost of the move is that **you cannot allowlist around an upstream block** —
-see "Overriding an upstream block" below.
+The cost of upstream filtering is that **you cannot allowlist around an upstream
+block** — see "Overriding an upstream block" below.
 
 ### Two things measured after the switch
 
@@ -284,10 +282,12 @@ sample contained subdomains of real businesses that look like plausible
 over-blocking. It does mean the two are **not equivalent**, and that moving malware
 blocking upstream changed what is blocked rather than simply relocating it.
 
-If you want both, add `tif.mini.txt` (~401,000 entries) back to `rpz_blocklists`
-alongside the upstream — a fraction of the RAM of the medium feed, with the
-upstream still covering what the feed misses. `make test` measures the overlap
-itself as a side effect of discovering its canary.
+This is why `tif.mini.txt` runs locally *alongside* the upstream rather than
+instead of it: a fifth of the medium feed's memory, and the two disagree often
+enough that running both is worth it. A local block is also the better-behaved of
+the two, since it returns a clean NXDOMAIN rather than the SERVFAIL described
+above. `make test` re-measures the overlap every run as a side effect of
+discovering its canary.
 
 Order is not cosmetic. In RPZ a `PASSTHRU` is itself a match, and a match stops
 unbound evaluating any later zone — so the allowlist only works because it is
