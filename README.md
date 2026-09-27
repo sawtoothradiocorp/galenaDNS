@@ -279,6 +279,16 @@ answer are unaffected, fresh lookups fail.
 
 ## Client setup
 
+Clients split into two kinds, and only the first gets failover from DNS:
+
+- **Configured with the hostname** — Android, the iOS/macOS profiles, browsers. They
+  look up `base.dns.swthrc.com`, so Route 53 hands them only healthy nodes. Nothing
+  to maintain.
+- **Configured with an IP** — Windows, routers, systemd-resolved. They never look the
+  hostname up, so health checks cannot help them. Failover there is the client's own
+  job, which means giving it **every** node's address, v4 and v6, and updating it
+  whenever the set of nodes changes. `make nodes` prints the current addresses.
+
 **Android 9+** — Settings ▸ Network & internet ▸ Private DNS ▸ Private DNS provider
 hostname ▸ `base.dns.swthrc.com`. This is DoT.
 
@@ -293,6 +303,13 @@ developer certificate. That concerns the profile file, not the DNS connection �
 the OS still validates your certificate on every query. Only one DNS profile can
 be active at a time, so installing one replaces the other.
 
+The profiles carry the hostname and no addresses. `make-mobileconfig.sh --address`
+can pin addresses into them, and it warns when you do: a pinned device connects only
+to those addresses, so it gets no Route 53 failover and never uses a node added
+later. Profiles generated before `hel1-a` existed were pinned to `fsn1-a` alone —
+reinstall from a fresh `make mobileconfig` on any device that has one. The payload
+UUIDs are stable, so the new profile replaces the old one rather than stacking.
+
 **Firefox** — Settings ▸ Privacy & Security ▸ DNS over HTTPS ▸ Max Protection ▸
 Custom ▸ `https://base.dns.swthrc.com/dns-query`
 
@@ -300,10 +317,35 @@ Custom ▸ `https://base.dns.swthrc.com/dns-query`
 With: Custom ▸ `https://base.dns.swthrc.com/dns-query`
 
 **Windows 11** — Settings ▸ Network & internet ▸ your adapter ▸ DNS server
-assignment ▸ Edit ▸ add the node's IP, then set DNS over HTTPS to your URL.
+assignment ▸ Edit ▸ Manual. For IPv4, put one node in Preferred and the other in
+Alternate, and set DNS over HTTPS to On (manual template) with
+`https://base.dns.swthrc.com/dns-query` on **both**; repeat for IPv6 with the two v6
+addresses. Windows switches to the alternate itself when the preferred stops
+answering. The Settings page has two slots per family, so this fits two nodes and no
+more — a third would need `netsh` or the legacy Control Panel adapter dialog.
 
-**Routers / systemd-resolved** — point at the node IP with DoT and set the TLS
-hostname to `base.dns.swthrc.com`.
+**systemd-resolved** — list every node, v4 and v6, each with the TLS name after `#`:
+
+```ini
+# /etc/systemd/resolved.conf
+[Resolve]
+DNS=2.28.3.17#base.dns.swthrc.com 46.62.237.108#base.dns.swthrc.com
+DNS=2a01:4f8:c012:b8df::1#base.dns.swthrc.com 2a01:4f9:c014:67fb::1#base.dns.swthrc.com
+DNSOverTLS=yes
+Domains=~.
+```
+
+resolved moves to the next server when the current one fails. Addresses as of
+2026-09-27; `make nodes` is authoritative.
+
+**Routers** — the same principle: enter every node's address with DoT and the TLS
+hostname `base.dns.swthrc.com`. How many servers a router accepts, and whether it
+fails over between them rather than only using the first, varies by firmware.
+
+**Until the nodes are on Hetzner Primary IPs, these addresses are not stable.** They
+belong to the servers, so replacing a node gives it a new address, and every
+IP-configured client pointed at the old one breaks silently — hostname clients just
+follow DNS. See BACKLOG.md.
 
 ## Blocking
 

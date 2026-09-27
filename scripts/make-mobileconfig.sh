@@ -29,6 +29,12 @@ Usage: $0 --domain <fqdn> [--out <dir>] [--address <ip>]...
   --out DIR        Where to write the .mobileconfig files (default: .)
   --address IP     Optional bootstrap address, repeatable. Lets the device reach
                    the resolver without first resolving its name in plaintext.
+                   Usually a mistake: the device then connects ONLY to the
+                   listed addresses and never looks the hostname up, so Route 53
+                   failover cannot reach it, a node added later is never used,
+                   and a replaced node's old address breaks it. Omit it unless
+                   you pass every node's address and accept re-issuing the
+                   profile whenever the set of nodes changes.
   -h, --help       This.
 EOF
 }
@@ -48,6 +54,11 @@ done
   echo "--domain is required" >&2
   exit 2
 }
+
+if ((${#ADDRS[@]})); then
+  echo "WARNING: pinning ${#ADDRS[@]} address(es). Devices with this profile bypass DNS for" >&2
+  echo "         the resolver, so Route 53 failover does not apply to them. See --help." >&2
+fi
 command -v python3 >/dev/null || {
   echo "python3 is required (for stable UUID5 generation)" >&2
   exit 1
