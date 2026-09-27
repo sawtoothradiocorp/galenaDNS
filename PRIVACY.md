@@ -110,6 +110,13 @@ Be clear about what that trade costs you:
 
 Two further consequences, which apply to blocking wherever it happens:
 
+- **An upstream block can surface as SERVFAIL instead of NXDOMAIN.** Quad9 denies a
+  blocked name with an unsigned NXDOMAIN, and for a DNSSEC-signed parent zone this
+  resolver's own validator correctly refuses to accept a forged denial — so the
+  answer becomes SERVFAIL. The name is still blocked. The reason to care is that
+  some clients retry SERVFAIL against a fallback resolver, which defeats the block
+  and sends that one query to whatever they fall back to. Locally blocked names are
+  not affected.
 - **A blocked name returns NXDOMAIN, and that answer is not DNSSEC-signed.** If
   your client validates DNSSEC itself, a blocked lookup looks like an unsigned
   denial rather than a cryptographically proven one. This is inherent to RPZ

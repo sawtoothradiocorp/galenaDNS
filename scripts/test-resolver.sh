@@ -43,9 +43,9 @@ Usage: $0 --domain <fqdn> [--ip <addr>] [options]
                         Use it to test one specific node behind round-robin.
   --feed URL            Blocklist feed to sample blocked fixtures from.
                         Repeatable. Defaults to Hagezi Pro (ads/trackers).
-  --malware-canary DOM  A domain the UPSTREAM resolver should block, to verify
-                        malware filtering now that it is upstream policy rather
-                        than a local feed. Skipped if not given.
+  --malware-canary DOM  A domain the UPSTREAM resolver should block. Normally
+                        discovered automatically by probing a threat feed against
+                        the upstream and an unfiltered control; pass this to pin it.
   --allowlist FILE      Allowlist RPZ zone to read a test domain from.
                         Defaults to node/unbound/rpz/allowlist.rpz.
   --include-ratelimit   Also test rate limiting. This will get your address
@@ -283,19 +283,49 @@ if have kdig; then
   done
 
   # Domain-reputation malware blocking is done by the upstream resolver, not by a
-  # local feed, so there is nothing here to sample. There is also no published
-  # canary domain we can rely on, and inventing one would make this test lie —
-  # so it is opt-in. Pick a domain the upstream's own documentation says it
-  # blocks, pass it with --malware-canary, and this becomes a real assertion.
+  # local feed, so there is nothing local to sample. A hardcoded fixture would rot
+  # for the same reason the local malware fixtures were sampled rather than pinned.
+  #
+  # So the canary is DISCOVERED: take candidates from a public threat feed, ask the
+  # upstream's filtered endpoint and an unfiltered control, and a domain the
+  # filtered endpoint denies while the control resolves is one the upstream is
+  # actually blocking. Then assert our resolver blocks it too. Self-maintaining,
+  # and it tests the upstream that is actually deployed.
+  #
+  # Note the accepted rcodes. An upstream block is a forged denial, so for a
+  # DNSSEC-signed parent zone our LOCAL validator correctly refuses it and the
+  # answer is SERVFAIL rather than NXDOMAIN. Both mean blocked. See README.
+  # No mapfile or readarray here: macOS ships bash 3.2 and this script is meant to
+  # run from a laptop. Same reason the rest of the file avoids GNU-only flags.
+  canary=""
   if [[ -n ${MALWARE_CANARY:-} ]]; then
-    rc=$(rcode_of "$(q_dot "$MALWARE_CANARY")")
-    if [[ $rc == NXDOMAIN ]]; then
-      pass "upstream blocks malware canary" "${MALWARE_CANARY} -> NXDOMAIN"
-    else
-      fail "upstream blocks malware canary" "${MALWARE_CANARY} -> ${rc:-no response}, expected NXDOMAIN"
-    fi
+    canary=$MALWARE_CANARY
+  elif have dig; then
+    cand_src="https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/rpz/tif.medium.txt"
+    probes=0
+    while IFS= read -r d; do
+      [[ -n $d ]] || continue
+      probes=$((probes + 1))
+      ((probes <= 25)) || break
+      f=$(dig +time=3 +tries=1 @9.9.9.9 "$d" A 2>/dev/null | grep -oE 'status: [A-Z]+' | head -1)
+      [[ $f == *NXDOMAIN* ]] || continue
+      c=$(dig +time=3 +tries=1 @8.8.8.8 "$d" A 2>/dev/null | grep -oE 'status: [A-Z]+' | head -1)
+      [[ $c == *NOERROR* ]] || continue
+      canary=$d
+      break
+    done < <(curl -fsSL --max-time 30 -r 0-262144 "$cand_src" 2>/dev/null \
+      | grep -oE '^[a-z0-9][a-z0-9.-]+\.[a-z]{2,} CNAME \.$' | awk '{print $1}' | awk 'NR%7==0')
+  fi
+
+  if [[ -z $canary ]]; then
+    skip "upstream blocks malware canary" "could not discover one; pass --malware-canary DOMAIN"
   else
-    skip "upstream blocks malware canary" "pass --malware-canary DOMAIN to verify upstream filtering"
+    rc=$(rcode_of "$(q_dot "$canary")")
+    case $rc in
+      NXDOMAIN) pass "upstream blocks malware canary" "${canary} -> NXDOMAIN" ;;
+      SERVFAIL) pass "upstream blocks malware canary" "${canary} -> SERVFAIL (signed zone: our validator rejected the forged denial)" ;;
+      *)        fail "upstream blocks malware canary" "${canary} -> ${rc:-no response}, expected NXDOMAIN or SERVFAIL" ;;
+    esac
   fi
 
   # Read a testable entry out of the allowlist zone. Wildcards and rpz-ip

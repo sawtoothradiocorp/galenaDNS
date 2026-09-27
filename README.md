@@ -262,6 +262,33 @@ entries it costs about 3% of what the domain feed did.
 The cost of the move is that **you cannot allowlist around an upstream block** —
 see "Overriding an upstream block" below.
 
+### Two things measured after the switch
+
+**An upstream block on a DNSSEC-signed zone surfaces as SERVFAIL, not NXDOMAIN.**
+Quad9 denies a blocked name with an unsigned NXDOMAIN. For a signed parent zone our
+local validator correctly refuses to accept a forged denial, so the client sees
+SERVFAIL. Measured: `bahasay.africa` gives SERVFAIL normally and NXDOMAIN with
+`+cdflag`, while `2feet4paws.ae` (unsigned parent) gives NXDOMAIN either way.
+
+The name is still blocked, and the validator behaving this way is correct. But it
+is worth knowing, because **some clients retry SERVFAIL against a fallback
+resolver**, which both defeats the block and sends that query somewhere else. A
+locally blocked name never has this problem, since RPZ rewrites are not validated
+against the real zone. If that matters to you, keep malware blocking local.
+
+**Quad9 and Hagezi TIF medium overlap less than you might assume.** Of 57 sampled
+domains from that feed, Quad9's filtered endpoint blocked 9; the other 48 resolved
+normally through both Quad9 and Google. This test cannot tell you which list is
+right — Quad9 may be more precise, or Hagezi may have broader coverage, and the
+sample contained subdomains of real businesses that look like plausible
+over-blocking. It does mean the two are **not equivalent**, and that moving malware
+blocking upstream changed what is blocked rather than simply relocating it.
+
+If you want both, add `tif.mini.txt` (~401,000 entries) back to `rpz_blocklists`
+alongside the upstream — a fraction of the RAM of the medium feed, with the
+upstream still covering what the feed misses. `make test` measures the overlap
+itself as a side effect of discovering its canary.
+
 Order is not cosmetic. In RPZ a `PASSTHRU` is itself a match, and a match stops
 unbound evaluating any later zone — so the allowlist only works because it is
 first. `bootstrap.sh` emits it ahead of the list unconditionally, and `make audit`
@@ -574,6 +601,7 @@ scripts/            run from your machine: test-resolver.sh, make-mobileconfig.s
 | unbound OOMs or restarts | Lower `unbound_msg_cache_size`/`unbound_rrset_cache_size`, or use a larger server type. `make audit` section 11 reports RSS |
 | Everything SERVFAILs | The upstream is unreachable and `forward-first: no` means there is no cleartext fallback, by design. Check `ss -tn state established '( dport = :853 )'` on the node |
 | A site is blocked and the allowlist does not help | It is an upstream block, not a local one. See "Overriding an upstream block" |
+| A blocked site gives SERVFAIL rather than NXDOMAIN | Expected for an upstream block on a DNSSEC-signed zone: our validator rejects the forged denial. Confirm with `kdig +tls +cdflag` — NXDOMAIN there means validation is doing it |
 
 ```sh
 make ssh                                  # get onto the node
