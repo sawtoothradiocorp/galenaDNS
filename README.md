@@ -755,7 +755,7 @@ scripts/            run from your machine: test-resolver.sh, make-mobileconfig.s
 | `make deploy` refuses, saying plan failed | Usually expired AWS SSO. It refuses rather than pushing settings it cannot confirm are current |
 | `apply` fails with a record conflict | The A/AAAA record already exists outside state. Delete it, or import it, or set `manage_dns_records = false` |
 | `plan` fails with `AccessDenied` on `GetHealthCheck` | Terraform is using the node's TXT-only ACME key, because `aws_profile` is empty. Set it, or export an identity with Route 53 health-check access |
-| `make ssh`, `deploy` or `audit` time out while DoT still answers | Your public address is no longer `admin_cidr` — a new network or a VPN. Check with `curl -4 https://ifconfig.co`, then update `admin_cidr` and `make apply` |
+| `make ssh`, `deploy` or `audit` time out while DoT still answers | Your public address is no longer `admin_cidr`. Check with `curl -4 https://ifconfig.co`. If `admin_cidr` is a jump host you can still reach, go through it — `ssh -J <jumphost> root@<node>`, or add `ProxyJump <jumphost>` for the node addresses in `~/.ssh/config` so the `make` targets follow. Widen `admin_cidr` only for an address you control; a VPN exit is shared with strangers |
 | `dig` returns only some nodes' addresses | Expected when a node is failing its health check — Route 53 withholds it. `terraform output dns_health_checks`, then `aws route53 get-health-check-status` |
 | Renewal fails ~60 days later | The certbot systemd drop-in is missing; check `systemctl cat certbot.service` |
 | Renewal fails within hours | Temporary SSO/STS credentials were installed. `make deploy` blocks this, but check `/etc/letsencrypt/aws.credentials` for a session token |

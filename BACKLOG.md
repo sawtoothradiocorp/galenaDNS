@@ -54,9 +54,13 @@ failover cannot help with.
 
 ### Shape of the implementation
 
-You already own the right machine: **mtbaldy** (Hetzner Hillsboro).
-It is off-node, already trusted, already has SSH to the resolver, and involves no
-third party.
+You already own the right machine: **mtbaldy** (a Debian 13 box at
+Hetzner Hillsboro that also runs a WireGuard endpoint). It is off-node, always on,
+already trusted as `admin_cidr`, and involves no third party. Checked 2026-09-27:
+its `dig` (BIND 9.20) speaks DoT and DoH natively, so those checks and the
+certificate check need nothing installed; DoQ and DoH3 need `kdig` and `dnslookup`,
+which it does not have. `Linger=no` for the admin user, so a scheduled check needs
+root once either way — a system timer, or `loginctl enable-linger` for a user one.
 
 - a systemd timer there running `scripts/test-resolver.sh` against the public name
 - plus a certificate-expiry check, which is the single highest-value piece
