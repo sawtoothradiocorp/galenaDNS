@@ -59,9 +59,12 @@ data "aws_route53_zone" "this" {
 # ---------------------------------------------------------------------------
 # Health checks
 # ---------------------------------------------------------------------------
-# TCP on 853 (DoT), from Route 53's ~15 checker regions. A node is marked
-# unhealthy once more than 18% of those regions agree, for failure_threshold
-# consecutive rounds.
+# TCP on 853 (DoT), from 16 Route 53 checkers — two in each of 8 AWS regions,
+# measured 2026-09-27. Each checker calls the endpoint failed after
+# failure_threshold consecutive failures, and Route 53 treats the endpoint as
+# healthy only while MORE than 18% of checkers report it healthy. 18% of 16 is
+# 2.88, so it stays healthy while 3 or more checkers pass and goes unhealthy when
+# 14 of the 16 report it down.
 #
 # What this proves: the node is reachable and something is accepting connections
 # on the DoT port. That covers the failures that actually take a node out — the

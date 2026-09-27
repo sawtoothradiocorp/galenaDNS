@@ -29,8 +29,8 @@ resource "hcloud_primary_ip" "ipv4" {
   type     = "ipv4"
   location = each.value.location
 
-  # The point of this file. Hetzner's own docs recommend against true for the
-  # same reason: a server deletion would take the address with it.
+  # The point of this file. The hcloud provider's own docs recommend against true
+  # for the same reason: a server deletion would take the address with it.
   auto_delete = false
 
   # No delete_protection, deliberately: the only IP-configured clients are the

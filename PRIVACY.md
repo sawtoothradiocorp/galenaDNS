@@ -85,7 +85,7 @@ differ in who decides and in whether it can be overridden.
 3. **Malware, phishing and C2** — Hagezi TIF mini, ~401,000 domains. Runs in
    addition to the upstream's own malware filtering, not instead of it: the two
    lists were measured to disagree often, so both are applied.
-4. **Malicious response IPs** — Hagezi TIF IPs, ~72,000 entries, blocking
+4. **Malicious response IPs** — Hagezi TIF IPs, ~34,500 entries, blocking
    resolution *to* known-bad addresses whatever domain was asked for. Kept locally
    because no domain-reputation feed can do this: it catches a brand-new or
    compromised domain pointing at known command-and-control infrastructure.
@@ -136,8 +136,8 @@ Two further consequences, which apply to blocking wherever it happens:
   the design, so it comes first. Queries leave this server over authenticated
   DNS-over-TLS to Quad9 (`dns.quad9.net`), which therefore receives every name
   this resolver looks up. What Quad9 does *not* receive is any client: every query
-  arrives from this node's single IP address, so your address is never disclosed to
-  them and this server acts as a mixer for everyone using it. Quad9 is a Swiss
+  arrives from the address of whichever node you are connected to, so your address
+  is never disclosed to them and each node acts as a mixer for everyone using it. Quad9 is a Swiss
   non-profit with a published no-logging policy and third-party audits. We cannot
   verify that policy, and neither can you — it is trust, one hop further out.
 
@@ -173,7 +173,8 @@ Two further consequences, which apply to blocking wherever it happens:
   requires matching inbound connections against outbound traffic. With many
   concurrent users, queries interleave and that gets hard. With one user, anything
   leaving is obviously theirs. This is a property of traffic volume, not of
-  configuration, and no setting in this repository improves it.
+  configuration. Running two nodes makes it slightly worse, not better: users are
+  split between them, so each node mixes only its own share.
 
 - **The hostname is public.** Every Let's Encrypt certificate is published to
   Certificate Transparency logs, so the resolver's name is permanently and
@@ -201,9 +202,9 @@ Two further consequences, which apply to blocking wherever it happens:
   records in the same zone. AWS therefore sees the zone's contents and the
   short-lived `_acme-challenge` TXT records, but no client query ever reaches it.
 
-  Route 53 also runs the health checks that withdraw a dead node from DNS. Those
-  open a TCP connection to this node's port 853 every 30 seconds from AWS's checker
-  regions and close it again, which tells AWS whether the node is up — something the
+  Route 53 also runs the health checks that withdraw a dead node from DNS. Each of
+  its 16 checkers, spread over 8 AWS regions, opens a TCP connection to each node's
+  port 853 every 30 seconds and closes it again, which tells AWS whether the node is up — something the
   Certificate Transparency log already made public when the certificate was issued.
   No DNS query is sent, nothing about any client is involved, and the connections
   arrive at the node like any other: unlogged. Route 53 **query logging is not

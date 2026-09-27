@@ -4,7 +4,7 @@
 #
 # Checks the RUNNING system, not the repo, for anything that persists client IP
 # addresses or query names. Reviewing the config only proves the config is right;
-# check 13 below sends a uniquely-named query and then goes looking for it on
+# section 10 below sends a uniquely-named query and then goes looking for it on
 # disk, which is the check that catches what a config review misses.
 #
 # Every check is documented in README.md under "What the privacy audit checks".
@@ -444,18 +444,19 @@ section "6. Outbound connections"
 # ===========================================================================
 # A remote logging sink would show up here as an established connection to
 # something that is not DNS, ACME or the blocklist CDN.
-# Exclude the admin CIDR: the SSH session running this audit would otherwise
-# always appear here, training the reader to ignore the check.
-# Inbound and outbound connections both appear in `ss state established`, and they
-# have to be told apart by the LOCAL port, not the peer's.
 #
-# This filtered on the peer port alone, which reported every CLIENT connection as an
-# unexpected outbound one: an inbound DoT connection is local=:853 with an ephemeral
-# peer port, so it matched nothing in the exclusion list. The check therefore only
-# passed while the admin was the resolver's only user — the first real client to
-# connect produced a WARN naming them. Route 53 health checkers now connect to 853
-# every 30 seconds as well, so it would have warned permanently, which is precisely
-# the "train the reader to ignore this check" failure the note below warns about.
+# Inbound and outbound connections both appear in `ss state established`, and they
+# have to be told apart by the LOCAL port, not the peer's. This used to filter on
+# the peer port alone, which reported every CLIENT connection as an unexpected
+# outbound one: an inbound DoT connection is local=:853 with an ephemeral peer
+# port, so it matched nothing in the exclusion list. The check only passed while
+# the admin was the resolver's only user — the first real client to connect
+# produced a WARN naming them — and with Route 53's checkers hitting 853 every 30
+# seconds it would have warned permanently. A check that always warns trains the
+# reader to ignore it, which is worse than no check.
+#
+# The admin address is still excluded, belt and braces: the SSH session running
+# this audit is inbound on 22 and already skipped by the local-port test.
 admin_ip=${GALENA_ADMIN_CIDR%%/*}
 unexpected=$(ss -tupnH state established 2>/dev/null \
   | awk -v admin="${admin_ip:-__no_admin_ip__}" '
@@ -572,7 +573,7 @@ esac
 if ((probe_ok > 0)); then
   sleep 2
   # Search everything writable that could plausibly hold a log. The RPZ
-  # directory is excluded only for speed: it is 60 MB of blocklist we installed
+  # directory is excluded only for speed: it is ~25 MB of blocklist we installed
   # ourselves, and it is rewritten wholesale on every refresh.
   hits=$(timeout 120 grep -rlF "$marker" \
     /var/log /var/lib /var/cache /var/tmp /etc /root /home /tmp /srv /opt \

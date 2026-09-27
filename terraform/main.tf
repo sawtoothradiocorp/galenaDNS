@@ -64,10 +64,12 @@ locals {
   ]) : ""
 
   deploy_hint_managed = <<-EOT
-    1. The A/AAAA records were created by Terraform. Confirm they resolve:
+    1. make deploy
+    2. make audit && make test
+    3. The A/AAAA records were created by Terraform. Confirm they resolve:
          dig +short ${var.domain} A
-    2. make deploy
-    3. make audit && make test
+       With failover on, a node appears only once its health checks pass, so a
+       node that was never deployed is missing from this answer by design.
     ${local.staging_note}
   EOT
 

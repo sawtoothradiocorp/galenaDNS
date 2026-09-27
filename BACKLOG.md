@@ -78,33 +78,20 @@ weeks before clients notice, and killing the timer on mtbaldy also produces one.
 
 ---
 
-## 2. A second node
+## 2. A second node — done
 
-Single node means **total DNS failure**, not degradation. A client with Private DNS
-or the `.mobileconfig` installed has no fallback — it presents as "the internet is
-broken" with no clue why. This is the strongest argument against pointing anyone
-else at it.
+`hel1-a` joined `fsn1-a` on 2026-09-27, for +$7.09/month ($6.49 `cx23` + $0.60
+primary IPv4) plus $1.50/month for its two health checks. See README "Costs".
 
-Verified against the account's own `/v1/pricing` on 2026-09-27: **+$7.09/month**
-($6.49 `cx23` + $0.60 primary IPv4), plus $1.50/month for the second node's two
-health checks. See README "Costs".
-
-Pick `nbg1` or `hel1`. Both are close enough to `fsn1` that round-robin costs no
-noticeable latency, which avoids the multi-continent problem where a European
-client gets a distant address a third of the time. US locations are a different and
-far more expensive product line — no `cx*` type exists in `ash` or `hil`, and the
-cheapest 4 GB option is `cpx21` at $37.49.
-
-Mechanically it is one key in `var.nodes`; the map was built for this.
-
-Prefer **hel1** over nbg1. fsn1 and nbg1 are both in Germany, sharing one legal
-system, one national grid and one country's network infrastructure; hel1 is in
-Finland at the same price and the same `eu-central` network zone. Given the German
-resolver-liability precedent noted in section 3, that is the one axis of diversity
-worth buying. The caveat is that Hetzner Online GmbH is a German company either
-way, so this diversifies the *server*, not the *operator* — full diversity means a
-second provider. The latency cost is ~15-25 ms for central-European clients and
-negligible from the US.
+**hel1 rather than nbg1**, because fsn1 and nbg1 are both in Germany — one legal
+system, one national grid, one country's network — while hel1 is in Finland at the
+same price and in the same `eu-central` network zone. Given the German
+resolver-liability precedent in section 3, that was the one axis of diversity worth
+buying. The caveat stands: Hetzner Online GmbH is German either way, so this
+diversifies the *server*, not the *operator*; full diversity means a second
+provider. US locations are a different and far more expensive product line — no
+`cx*` type exists in `ash` or `hil`, and the cheapest 4 GB option is `cpx21` at
+$37.49.
 
 ### Two nodes is not failover on its own — done
 

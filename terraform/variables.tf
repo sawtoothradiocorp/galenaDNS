@@ -23,7 +23,7 @@ variable "project_name" {
 # ---------------------------------------------------------------------------
 
 variable "manage_dns_records" {
-  description = "Create the A/AAAA records for var.domain in Route 53. When true, plan and apply need AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in the environment. Set false to manage the records yourself."
+  description = "Create the A/AAAA records for var.domain in Route 53, and the health checks behind failover. When true, plan and apply need AWS credentials with Route 53 record and health-check access — aws_profile, or the standard credential chain. The node's TXT-only ACME key is NOT enough. Set false to manage the records yourself."
   type        = bool
   default     = true
 }
@@ -117,7 +117,8 @@ variable "dns_health_check_port" {
 
 variable "dns_health_check_interval" {
   description = <<-EOT
-    Seconds between health checks, from each of Route 53's ~15 checker regions.
+    Seconds between health checks, from each of Route 53's 16 checkers (two in
+    each of 8 AWS regions).
     Route 53 permits only 30 or 10.
 
     10 is a billable "optional feature" at $2.00/month per check on a non-AWS
@@ -160,7 +161,7 @@ variable "aws_region" {
 }
 
 variable "aws_profile" {
-  description = "Named AWS profile for Terraform to use, e.g. an SSO profile. Leave empty to use AWS_PROFILE or the standard credential chain. Terraform only needs Route 53 access; it is separate from the long-lived key the node uses for ACME renewal."
+  description = "Named AWS profile for Terraform to use, e.g. an SSO profile. Leave empty to use AWS_PROFILE or the standard credential chain. When set it takes precedence over AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY in the environment, so the ACME key exported for `make deploy` does not interfere. Terraform needs Route 53 record and health-check access; this is separate from the long-lived TXT-only key the node uses for ACME renewal."
   type        = string
   default     = ""
 }
@@ -271,10 +272,6 @@ variable "acme_staging" {
 }
 
 # ---------------------------------------------------------------------------
-# Blocklists (RPZ)
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
 # Resolution posture
 # ---------------------------------------------------------------------------
 # This is the single most consequential privacy decision in the whole project,
@@ -290,8 +287,8 @@ variable "acme_staging" {
 #
 # Forwarding over DoT splits those halves across two parties who would have to
 # collude. The provider keeps client IPs and sees only ciphertext leaving; the
-# upstream sees query names attributed to this node's single address and never
-# sees a client. Neither can reconstruct who asked what.
+# upstream sees query names attributed to the node's own address and never sees
+# a client. Neither can reconstruct who asked what.
 #
 # The cost is independence: the upstream's blocking policy applies and this
 # resolver's allowlist cannot override it, because an upstream NXDOMAIN never
@@ -342,6 +339,10 @@ variable "forward_tls_upstreams" {
     error_message = "forward_tls_upstreams must use port 853. Forwarding on 53 would send query names in cleartext, which defeats the entire reason for forwarding."
   }
 }
+
+# ---------------------------------------------------------------------------
+# Blocklists (RPZ)
+# ---------------------------------------------------------------------------
 
 variable "rpz_blocklists" {
   description = <<-EOT
@@ -396,7 +397,7 @@ variable "rpz_blocklists" {
       #
       # Neither a domain feed nor the upstream can do this: it catches a
       # brand-new or compromised domain pointing at known C2 infrastructure,
-      # whatever the domain is. 72,000 entries / 2.3 MB.
+      # whatever the domain is. ~34,500 entries / ~1 MB as of 2026-09-27.
       name        = "threatip"
       url         = "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/rpz/tif-ips.txt"
       min_entries = 20000
@@ -433,7 +434,7 @@ variable "rpz_blocklists" {
 }
 
 variable "rpz_update_interval" {
-  description = "systemd OnCalendar/OnUnitActiveSec interval for blocklist refresh. Hagezi publishes every 4-8h and sets Expires: 8 hours."
+  description = "systemd OnUnitActiveSec interval for blocklist refresh. Hagezi publishes every 4-8h and sets Expires: 8 hours."
   type        = string
   default     = "8h"
 }
@@ -511,8 +512,10 @@ variable "rate_limit_exempt_cidrs" {
 variable "unbound_msg_cache_size" {
   description = <<-EOT
     unbound msg-cache-size. Doubled from 128m when the 1.75M-entry domain malware
-    feed moved upstream: RPZ now claims roughly 250 MB rather than 0.9-1.2 GB, and
-    cache is what stands between a query and an upstream round trip.
+    feed moved upstream: unbound now measures ~557 MB steady with every zone
+    loaded, rather than the 0.9-1.2 GB the medium feed alone cost, and cache is
+    what stands between a query and an upstream round trip. README "Memory" has the
+    measurements, including the ~1.4 GB reload peak the cap must cover.
 
     Deliberately conservative. Measure actual RSS with `make audit` before going
     higher — there is likely room for 512m/1024m on a 4 GB node, but free RAM is
@@ -534,10 +537,6 @@ variable "unbound_memory_max" {
   default     = "2500M"
 }
 
-# ---------------------------------------------------------------------------
-# Observability
-# ---------------------------------------------------------------------------
-
 variable "dnsdist_packet_cache_entries" {
   description = <<-EOT
     Maximum entries in dnsdist's packet cache, which answers repeated questions
@@ -555,6 +554,10 @@ variable "dnsdist_packet_cache_entries" {
     error_message = "dnsdist_packet_cache_entries must be between 0 (disabled) and 5,000,000."
   }
 }
+
+# ---------------------------------------------------------------------------
+# Observability
+# ---------------------------------------------------------------------------
 
 variable "enable_localhost_metrics" {
   description = <<-EOT

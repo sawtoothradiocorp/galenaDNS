@@ -7,7 +7,9 @@ OnBootSec=3min
 OnUnitActiveSec=${GALENA_RPZ_UPDATE_INTERVAL}
 # Spread the load so every galena node on earth is not hitting the CDN at :00.
 RandomizedDelaySec=30min
-# Catch up after downtime rather than waiting a full interval with a stale list.
+# No effect here, strictly: Persistent= only applies to OnCalendar= timers, and
+# this one is monotonic. Catching up after downtime is OnBootSec=3min's job above.
+# Kept so switching to OnCalendar later does not silently lose catch-up.
 Persistent=true
 Unit=rpz-update.service
 

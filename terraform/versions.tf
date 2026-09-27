@@ -4,8 +4,9 @@ terraform {
   required_providers {
     aws = {
       source = "hashicorp/aws"
-      # 6.66.0 is current as of 2026-09-21. Only used for the Route 53 A/AAAA
-      # records; required even when manage_dns_records = false, but then unused.
+      # 6.66.0 is current as of 2026-09-21. Only used for Route 53 — the A/AAAA
+      # records and their health checks; required even when manage_dns_records =
+      # false, but then unused.
       version = "~> 6.66"
     }
     hcloud = {
@@ -28,7 +29,10 @@ provider "aws" {
   #     aws sso login --profile <name>
   #     export AWS_PROFILE=<name>
   # which avoids a long-lived access key entirely. AWS_ACCESS_KEY_ID /
-  # AWS_SECRET_ACCESS_KEY work too.
+  # AWS_SECRET_ACCESS_KEY work too, but when var.aws_profile is set below it wins
+  # over them — so the TXT-only ACME key exported for `make deploy` is ignored
+  # here. Verified with 6.66 on 2026-09-27. That key could not run a plan anyway:
+  # it is denied the health-check reads.
   #
   # Route 53 is global, but the provider still requires a region.
   region  = var.aws_region

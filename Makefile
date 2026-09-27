@@ -24,9 +24,10 @@ help: ## Show this help
 		| awk 'BEGIN{FS=":.*?## "}{printf "  \033[1m%-14s\033[0m %s\n", $$1, $$2}'
 	@echo
 	@echo "Required environment:"
-	@echo "  HCLOUD_TOKEN            Hetzner Cloud API token (read+write)   [plan/apply/destroy]"
-	@echo "  AWS_ACCESS_KEY_ID       Route 53: records + ACME    [plan/apply/deploy]"
-	@echo "  AWS_SECRET_ACCESS_KEY   its secret                  [plan/apply/deploy]"
+	@echo "  HCLOUD_TOKEN            Hetzner Cloud API token (read+write)       [plan/apply/destroy/deploy]"
+	@echo "  aws_profile (tfvars)    SSO profile: Route 53 records + checks     [plan/apply/destroy/deploy]"
+	@echo "  AWS_ACCESS_KEY_ID       TXT-only ACME key, installed on the nodes  [deploy]"
+	@echo "  AWS_SECRET_ACCESS_KEY   its secret                                 [deploy]"
 
 # --------------------------------------------------------------------------
 # Safe targets

@@ -52,7 +52,7 @@ validated locally either way, so the upstream is only ever trusted to relay.
 | `dnslookup` | `brew install ameshkov/tap/dnslookup` — DoH3 tests |
 | `shellcheck` (optional) | `brew install shellcheck` — used by `make check` |
 
-Two environment variables, never files:
+Credentials come from the environment, never from files in this repository:
 
 ```sh
 export HCLOUD_TOKEN=...           # Hetzner Cloud, read+write
@@ -69,7 +69,7 @@ they reach neither.
 Two separate credentials, deliberately, because they have very different
 lifetimes and blast radii:
 
-**1. Terraform, for the A/AAAA records.** Runs interactively on your machine, so
+**1. Terraform, for the records and health checks.** Runs interactively on your machine, so
 it can use whatever you already have — an SSO profile is ideal because nothing
 long-lived is created:
 
@@ -78,8 +78,10 @@ aws sso login --profile <your-profile>
 export AWS_PROFILE=<your-profile>
 ```
 
-or set `aws_profile` in `terraform.tfvars`. It needs read access to the zone plus
-`ChangeResourceRecordSets` for A and AAAA.
+or set `aws_profile` in `terraform.tfvars`. It needs read access to the zone,
+`ChangeResourceRecordSets` for A and AAAA, and the Route 53 health-check actions
+(`CreateHealthCheck`, `GetHealthCheck`, `UpdateHealthCheck`, `DeleteHealthCheck`,
+and `ChangeTagsForResource` / `ListTagsForResource` for their tags).
 
 **2. A long-lived IAM key on the node, for certbot renewal.** This one cannot be
 SSO: renewal runs unattended from a timer for years, and SSO tokens expire in
@@ -138,12 +140,14 @@ creates nothing.
 Two traps here, both of which fail loudly rather than quietly:
 
 - Terraform authenticates to AWS through `aws_profile` (an SSO profile), while the
-  *node's* certbot uses the scoped IAM user's static keys. If both are present the
-  provider refuses to choose — `A Profile was specified along with the environment
-  variables AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY`. So source the ACME
-  credentials for `make deploy` only, and `unset AWS_ACCESS_KEY_ID
-  AWS_SECRET_ACCESS_KEY` before `make plan` or `make apply`. An expired SSO token
-  shows up the same way; `aws sso login --profile <name>` fixes it.
+  *node's* certbot uses the scoped IAM user's static keys. When `aws_profile` is set
+  it wins over those keys in the environment — verified with provider 6.66 on
+  2026-09-27, where a plan with both present succeeded on the profile — so having
+  the ACME key exported for `make deploy` does not break `make plan`. What does
+  break it is `aws_profile` left empty with only the ACME key exported: Terraform
+  then uses the TXT-only key, which is denied `route53:GetHealthCheck` and fails
+  the refresh with `AccessDenied`. An expired SSO token fails the plan too;
+  `aws sso login --profile <name>` fixes it.
 - `make apply` and `make destroy` prompt for a typed confirmation, so they need a
   real terminal. Run them from an interactive shell — piped or non-tty stdin gets
   a message telling you so, not an unattended apply.
@@ -170,8 +174,8 @@ Reverse DNS is set too, in `terraform/rdns.tf`. Both addresses get a PTR of
 reverse zones for their ranges are delegated to them, so it will never appear in
 the Route 53 zone. Nothing in DoH/DoT/DoQ validates a PTR — this is so the node
 is identifiable as ours to abuse desks and traceroutes. With several nodes they
-all share one PTR, which stays forward-confirmed because the A/AAAA record set
-already lists every node.
+all share one PTR, which stays forward-confirmed because every node has its own
+A/AAAA record under that same name.
 
 ACME does not wait on these — certbot creates and removes its own
 `_acme-challenge` TXT record — so you can deploy immediately:
@@ -194,21 +198,25 @@ burning Let's Encrypt rate limits while you get DNS-01 working, then flip it to
 `false` and re-run `make deploy`. Staging certificates are not publicly trusted,
 so pass `--insecure` to the test script while staging is on.
 
-### Adding a second location later
+### Adding a location
 
-Add a key to `nodes`. Because it is a map rather than a `count`, the existing node
-is untouched:
+Add a key to `nodes`. Because it is a map rather than a `count`, existing nodes are
+untouched:
 
 ```hcl
 nodes = {
   fsn1-a = { location = "fsn1" }
-  hel1-a = { location = "hel1" }   # new
+  hel1-a = { location = "hel1" }
+  nbg1-a = { location = "nbg1" }   # new
 }
 ```
 
-Then `make apply` — which adds the new record set and, above one node, its health
-checks — and `make deploy`. Each node gets its own certificate for the shared name,
-which is exactly why ACME here is DNS-01 and not HTTP-01.
+Then `make apply`, which creates the server, its Primary IPs, its record sets and
+its health checks, and `make deploy`. The new node stays out of DNS until
+`make deploy` has it answering — see "Failover". Each node gets its own certificate
+for the shared name, which is exactly why ACME here is DNS-01 and not HTTP-01.
+Anything configured by IP has to be told about the new addresses by hand; see
+"Client setup".
 
 ### Failover
 
@@ -223,8 +231,8 @@ address whose check is failing is not returned:
 
 | | |
 |---|---|
-| Probe | TCP connect to 853 (DoT), from Route 53's ~15 checker regions |
-| Unhealthy when | more than 18% of regions disagree, for 3 consecutive rounds |
+| Probe | TCP connect to 853 (DoT) from 16 Route 53 checkers, two in each of 8 AWS regions |
+| Unhealthy when | 18% or fewer of checkers report it healthy — 14 of 16 down; each checker needs 3 consecutive failures |
 | Detection | `dns_health_check_interval` × `dns_health_check_failure_threshold` = 90s |
 | Client recovery | detection + `dns_record_ttl`, so ~150s at TTL 60 |
 | Cost | $0.75/check/month — one per node per address family, so $3.00 for two nodes |
@@ -361,7 +369,7 @@ them is yours to override.
 | `allowlist` | `node/unbound/rpz/allowlist.rpz` | yours (empty by default) | overrides everything below |
 | `adblock` | Hagezi Pro | ~456,000 | ads, trackers, telemetry |
 | `threat` | Hagezi TIF **mini** | ~401,000 | malware, phishing, scams, C2 |
-| `threatip` | Hagezi TIF IPs | ~72,000 | resolution *to* malicious IPs |
+| `threatip` | Hagezi TIF IPs | ~34,500 | resolution *to* malicious IPs |
 
 **Upstream, at Quad9** — malware, phishing and C2 domains, from commercial threat
 intelligence updated continuously.
@@ -487,7 +495,8 @@ takes out every site behind it.
 A systemd timer refreshes every 8 hours, matching Hagezi's publish cadence, with
 a randomised delay. Each feed is fetched, **validated**, swapped in atomically,
 and reloaded; if unbound rejects the new zone it is rolled back to the previous
-copy. Zones are processed one at a time so two 46 MB reloads never overlap.
+copy. Zones are processed one at a time, because a reload holds the old and new
+copy of a zone at once and two of those peaks should never stack.
 
 Validation is not paranoia. Hagezi's full `rpz/tif.txt` is over jsdelivr's 150 MB
 limit, and jsdelivr reports that as a **143-byte HTTP 200** — a naive fetcher
@@ -497,7 +506,8 @@ with fewer than `min_entries` records.
 
 ## What the privacy audit checks
 
-`make audit` runs 11 sections on the server and exits nonzero on any FAIL:
+`make audit` runs 11 sections on every node and exits nonzero if any node has a
+FAIL:
 
 1. **Sockets** — nothing on port 53 except loopback; all four transports bound.
 2. **Logging** — journald `Storage=volatile`; no `/var/log/journal`; rsyslog,
@@ -547,7 +557,9 @@ make test
 make test ARGS=--include-ratelimit    # will dynblock your own address
 ```
 
-It checks all four transports, DNSSEC (a bogus signature must SERVFAIL and a good
+It tests every node separately, by address — testing the hostname would exercise
+whichever node DNS returned and skip the rest. On each it checks all four
+transports, DNSSEC (a bogus signature must SERVFAIL and a good
 one must set the AD bit), a known ad domain, malware domains **sampled live from
 the deployed feeds**, the allowlist, and that port 53 is closed.
 
@@ -589,7 +601,7 @@ the name from the parts.
 
 Forwarding to Quad9 over authenticated DoT splits those halves. The provider keeps
 client IPs and sees only ciphertext leaving; Quad9 gets query names attributed to
-this node's single address and never sees a client. Neither can reconstruct who
+the node's own address and never sees a client. Neither can reconstruct who
 asked what alone. Three things fall out of it: this node becomes a mixer, so users
 are more private against Quad9 than they would be querying Quad9 directly; a warm
 anycast cache usually answers faster than a cold recursion chain; and the 1.75M
@@ -655,9 +667,9 @@ The IAM key is a different matter: a sensitive Terraform variable is written to
 means config changes are a re-deploy rather than a server rebuild, and
 `user_data` never has to carry a secret.
 
-**`cx23` by default, not `cpx22`.** After Hetzner's June 2026 price adjustment
-CPX22 is €19.49/mo against CX23's €5.49 for the same 4 GB, and this workload does
-not need the extra CPU.
+**`cx23` by default, not `cpx22`.** CPX22 is $22.99/month against CX23's $6.49 for
+the same 4 GB (this account's `/v1/pricing`, 2026-09-27), and this workload does not
+need the extra CPU.
 
 **Rate limiting is two layers.** `MaxQPSIPRule` is an inline per-IP ceiling that
 needs no state. Dynamic blocks catch sustained abuse but are computed from
@@ -703,9 +715,13 @@ cache now absorbs the repeats that unbound's message cache used to.
 ## Layout
 
 ```
-terraform/          infrastructure: server, firewall, SSH key, cloud-init
-  dns.tf            Route 53 A/AAAA records for the resolver hostname
+terraform/          infrastructure
+  nodes.tf          the servers
+  primary_ips.tf    their addresses, kept independent of the servers
+  firewall.tf       Hetzner Cloud Firewall, mirrored by nftables on the node
+  dns.tf            Route 53 records and the health checks that drive failover
   rdns.tf           PTR records at Hetzner for each node's addresses
+  outputs.tf        addresses, records, failover status, the cost estimate
   templates/        cloud-init (minimal: base packages, SSH, volatile logging)
 node/               rsynced to /opt/galena, installed by bootstrap.sh
   bootstrap.sh      idempotent configure; ordering matters, see its header
@@ -738,6 +754,9 @@ scripts/            run from your machine: test-resolver.sh, make-mobileconfig.s
 | `make deploy` refuses, saying state is behind the configuration | Outputs live in state, so a tfvars change reaches a node only after `make apply` recomputes them. Run `make apply` (it may report no infrastructure changes), then deploy |
 | `make deploy` refuses, saying plan failed | Usually expired AWS SSO. It refuses rather than pushing settings it cannot confirm are current |
 | `apply` fails with a record conflict | The A/AAAA record already exists outside state. Delete it, or import it, or set `manage_dns_records = false` |
+| `plan` fails with `AccessDenied` on `GetHealthCheck` | Terraform is using the node's TXT-only ACME key, because `aws_profile` is empty. Set it, or export an identity with Route 53 health-check access |
+| `make ssh`, `deploy` or `audit` time out while DoT still answers | Your public address is no longer `admin_cidr` — a new network or a VPN. Check with `curl -4 https://ifconfig.co`, then update `admin_cidr` and `make apply` |
+| `dig` returns only some nodes' addresses | Expected when a node is failing its health check — Route 53 withholds it. `terraform output dns_health_checks`, then `aws route53 get-health-check-status` |
 | Renewal fails ~60 days later | The certbot systemd drop-in is missing; check `systemctl cat certbot.service` |
 | Renewal fails within hours | Temporary SSO/STS credentials were installed. `make deploy` blocks this, but check `/etc/letsencrypt/aws.credentials` for a session token |
 | `bootstrap.sh` aborts on QUIC support | apt resolved dnsdist from Debian — check `apt-cache policy dnsdist` |

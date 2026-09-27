@@ -14,7 +14,8 @@
 crash.log
 crash.*.log
 
-# Variable files hold secrets; only the example is tracked
+# Variable files hold deployment specifics (addresses, email, profile name) —
+# never secrets, by design, but not for publishing. Only the example is tracked.
 *.tfvars
 *.tfvars.json
 !terraform.tfvars.example

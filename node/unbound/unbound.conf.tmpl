@@ -102,9 +102,10 @@ server:
 
     # ---------------------------------------------------------------------
     # Performance. Cache sizes are set deliberately rather than left at the
-    # defaults. They were sized when RPZ claimed 0.9-1.2 GB of RSS; with the
-    # 1.75M-entry domain malware feed moved upstream that is down to roughly
-    # 250 MB, so these have room to grow. See var.unbound_msg_cache_size.
+    # defaults. They were sized when the medium malware feed alone claimed
+    # 0.9-1.2 GB; with it upstream, unbound measures ~557 MB steady with every
+    # zone loaded, so these have room to grow. See var.unbound_msg_cache_size and
+    # README "Memory".
     # ---------------------------------------------------------------------
     num-threads: ${GALENA_NUM_THREADS}
     msg-cache-size: ${GALENA_UNBOUND_MSG_CACHE}
@@ -155,7 +156,8 @@ remote-control:
 ${GALENA_FORWARD_BLOCK}
 
 # Response policy zones are generated from the Terraform manifest, because order
-# is semantic: the allowlist must come first. See bin/rpz-update.sh.
+# is semantic: the allowlist must come first. bootstrap.sh writes that block;
+# bin/rpz-update.sh keeps the zone files fresh.
 #
 # RPZ is evaluated on this node regardless of posture, so the allowlist and the
 # ad/tracker feed keep working while forwarding. What an allowlist CANNOT do is

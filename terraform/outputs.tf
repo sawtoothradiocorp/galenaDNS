@@ -98,7 +98,8 @@ output "deploy_hint" {
 # US locations (ash, hil) are a different and much more expensive product line —
 # the cheapest 4 GB type there is cpx21 at $37.49 against cx23's $6.49 in the EU.
 # None of the cx* types are offered there at all, so a US node is not a one-line
-# change to var.nodes; see README "Adding a second location later".
+# change to var.nodes; see README "Costs".
+#
 # Route 53 health checks are the other recurring charge, and they are billed at the
 # NON-AWS endpoint rate because the endpoints are Hetzner addresses: $0.75 per check
 # per month, against $0.50 for an AWS endpoint (and the 50 free checks apply only to

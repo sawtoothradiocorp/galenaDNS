@@ -282,9 +282,10 @@ if have kdig; then
     fi
   done
 
-  # Domain-reputation malware blocking is done by the upstream resolver, not by a
-  # local feed, so there is nothing local to sample. A hardcoded fixture would rot
-  # for the same reason the local malware fixtures were sampled rather than pinned.
+  # The upstream does its own domain-reputation malware blocking, separately from
+  # the local feed sampled above — the two were measured to disagree often. There
+  # is no list of the upstream's to sample, and a hardcoded fixture would rot for
+  # the same reason the local malware fixtures are sampled rather than pinned.
   #
   # So the canary is DISCOVERED: take candidates from a public threat feed, ask the
   # upstream's filtered endpoint and an unfiltered control, and a domain the

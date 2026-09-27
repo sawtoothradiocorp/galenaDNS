@@ -1,9 +1,9 @@
 # Reverse DNS (PTR) for each node's public addresses.
 #
 # Every node's PTR is var.domain, the same name clients connect to. With several
-# nodes that means several addresses share one PTR target, which is fine: the
-# forward A/AAAA record already carries every node's address, so a
-# forward-confirmed reverse lookup still matches. Per-node names would need
+# nodes that means several addresses share one PTR target, which is fine: every
+# node has its own A/AAAA record under that same name, so a forward-confirmed
+# reverse lookup still matches. Per-node names would need
 # per-node forward records to stay consistent, which buys nothing here.
 #
 # This is cosmetic for a resolver — nothing in DoH/DoT/DoQ validates a PTR — but
@@ -12,8 +12,8 @@
 # ours rather than as a generic Hetzner VM.
 #
 # PTRs live at Hetzner, not in Route 53: the reverse zones for these ranges are
-# delegated to them, so the API in terraform/versions.tf is the only way to set
-# them. Hetzner refuses a PTR for an address outside the node's assignment, so a
+# delegated to them, so the Hetzner API (the hcloud provider) is the only way to
+# set them. Hetzner refuses a PTR for an address outside the node's assignment, so a
 # wrong ip_address here fails loudly at apply rather than going unnoticed.
 
 resource "hcloud_rdns" "ipv4" {

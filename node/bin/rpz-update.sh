@@ -13,8 +13,10 @@
 #     blocklist and reports success. Hagezi's full rpz/tif.txt does exactly this.
 #
 # So: fetch, validate hard, swap atomically, reload, and roll back if the reload
-# fails. Zones are processed one at a time to bound peak memory — two 46 MB zones
-# reloading at once on a 4 GB node is how you meet the OOM killer.
+# fails. Zones are processed one at a time to bound peak memory: a reload holds
+# the old and new copy of a zone at once, and two of those peaks stacked is how a
+# 4 GB node meets the OOM killer. This mattered most with the 1.75M-entry medium
+# feed; the current zones are ~12 MB and smaller, but the rule costs nothing.
 #
 # Logs aggregate counts only. No domain ever reaches the log.
 
@@ -110,7 +112,7 @@ while IFS=$'\t' read -r name url min; do
   zone="${name}${ZONE_SUFFIX}"
 
   # Conditional GET: if the feed has not changed since our copy, the CDN answers
-  # 304 and we move on without transferring 46 MB.
+  # 304 and we move on without transferring the whole feed again.
   curl_args=(
     --fail --location --silent --show-error --compressed
     --retry 3 --retry-delay 5 --retry-connrefused
