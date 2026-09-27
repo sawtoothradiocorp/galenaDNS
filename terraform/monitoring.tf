@@ -79,7 +79,10 @@ resource "aws_sns_topic_subscription" "alert_email" {
 resource "aws_cloudwatch_metric_alarm" "node_health" {
   for_each = local.alarmed_health_checks
 
-  alarm_name        = "${var.project_name}-${each.key}-dot-down"
+  # Named for WHAT is watched, not for the failure: the email subject is
+  # "<STATE>: <name>", and "-dot-down" produced "OK: ...-dot-down" on recovery,
+  # which reads as bad news. Changing a name replaces the alarm, harmlessly.
+  alarm_name        = "${var.project_name}-${each.key}-dot"
   alarm_description = "Route 53 health check for ${each.key}: TCP/${var.dns_health_check_port} is failing, so this address has been withdrawn from ${var.domain}. Clients are on the remaining nodes. See README \"Failover\"."
 
   namespace   = "AWS/Route53"
@@ -111,7 +114,7 @@ resource "aws_cloudwatch_metric_alarm" "node_health" {
 resource "aws_cloudwatch_metric_alarm" "probe_heartbeat" {
   count = local.monitoring_enabled ? 1 : 0
 
-  alarm_name        = "${var.project_name}-probe-silent"
+  alarm_name        = "${var.project_name}-probe-heartbeat"
   alarm_description = "No passing run from the external prober on ${var.monitor_host} for 20 minutes. Either the resolver is failing its checks (the prober's own alert has the detail), or the prober, its timer or its host has stopped."
 
   namespace   = local.heartbeat_namespace

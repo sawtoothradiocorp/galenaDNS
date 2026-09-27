@@ -298,9 +298,9 @@ turns the same signals into an email, all through one SNS topic to `alert_email`
 
 | Alert | Fires when | Source |
 |---|---|---|
-| `<node>-v4-dot-down`, `<node>-v6-dot-down` | a node's address stops accepting DoT and Route 53 withdraws it | CloudWatch alarm on each health check, `terraform/monitoring.tf` |
+| `<node>-v4-dot`, `<node>-v6-dot` | a node's address stops accepting DoT and Route 53 withdraws it | CloudWatch alarm on each health check, `terraform/monitoring.tf` |
 | prober findings | a transport fails, DNSSEC stops validating, blocking stops, or a certificate is invalid or has under 21 days left (under 7 is a FAIL) | `monitor/galena-probe` on `monitor_host` |
-| `probe-silent` | no passing probe run for 20 minutes | CloudWatch alarm on the prober's heartbeat metric |
+| `probe-heartbeat` | no passing probe run for 20 minutes | CloudWatch alarm on the prober's heartbeat metric |
 
 **The prober** runs every 5 minutes on `monitor_host` — mtbaldy — which is off-node,
 always on, and already `admin_cidr`. It checks every node **by address**, never
@@ -317,7 +317,7 @@ recovers, and a reminder every 24 hours while something stays broken. State live
 failure as new.
 
 **The dead man's switch.** After every run with no FAIL, the prober publishes one
-datapoint to CloudWatch; `probe-silent` fires after 20 minutes without one. That one
+datapoint to CloudWatch; `probe-heartbeat` fires after 20 minutes without one. That one
 alarm covers "the resolver is failing" *and* "the prober, its timer or its host is
 dead" — the second being the failure no monitor can report about itself. AWS
 evaluates it, so it does not depend on mtbaldy being alive.
@@ -343,9 +343,12 @@ release checked against its published SHA-256, a `galena-probe` system user, the
 (then shreds the copy it was shipped as), and the timer. With a new key it sends a
 **test alert** and runs the prober once, so the whole path is proven on the spot.
 
-Expect `probe-silent` to go into ALARM about 20 minutes after `make apply` and clear
-itself once the prober is installed: until then there is no heartbeat, which is
-exactly what it reports.
+Expect `probe-heartbeat` to go into ALARM as soon as `make apply` creates it — the
+periods before it existed count as missing, and missing counts as failing — and to
+clear within a minute of the prober's first heartbeat. Until then there is no
+heartbeat, which is exactly what it reports. Alarm emails are titled
+`ALARM: "<name>"` and `OK: "<name>"`; names say what is watched, not what went wrong,
+so a recovery never reads as bad news.
 
 ### Operating it
 
