@@ -40,14 +40,15 @@ heartbeat in CloudWatch, `probe-silent` cleared to OK, all four node alarms OK.
 | +1:39 | 0/16 healthy on both families |
 | +2:09 / +2:39 | `hel1-a` gone from Google / Cloudflare answers |
 | ~+1 and ~+6 | two prober runs record FAIL, publish no heartbeat |
-| +5:05 | both `hel1-a-*-dot-down` alarms fire |
+| +4:43 | both `hel1-a-*-dot-down` alarms fire (CloudWatch history: 20:18:01-02 UTC) |
 | +6:11 | dnsdist started |
 | +7:48 | 16/16 healthy again, both families |
 | +8:16 / +8:46 | back in Google / Cloudflare answers |
-| +10:12 | both alarms clear |
+| +9:43 | both alarms clear (20:23:01-02 UTC) |
 | ~+11 | prober run passes; heartbeat resumes |
 
-The heartbeat gap was 15 minutes, under `probe-silent`'s 20, so that alarm rightly
+Alarm times are from CloudWatch's own history; the rest were observed by polling
+every 20 seconds, so each is accurate to within that. The heartbeat gap was 15 minutes, under `probe-silent`'s 20, so that alarm rightly
 stayed quiet — for an outage this short the prober's own FAIL email is the alert.
 Clients were never without a node. The drill also found a bug: `/etc/galena-probe`
 was installed `0750 root:galena-probe`, so `make monitor-check` could not read
