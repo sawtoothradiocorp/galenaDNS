@@ -146,15 +146,19 @@ outside Europe.
 
 Not code. All of it blocks "lightly advertised", none of it blocks personal use.
 
-- **Stable addresses before telling anyone to type one in.** Windows, routers and
-  systemd-resolved are configured by IP, and each node's address currently dies
-  with its server, so replacing a node silently breaks every such client. Drafted
-  and plan-verified on the `primary-ips` branch: it imports the four existing
-  Primary IPs with `auto_delete = false` and `delete_protection = true`. No address
-  change, no downtime, no added cost. Read that commit before applying — the
-  obvious version of the change deletes both nodes' addresses, and the plan does
-  not show it. Hostname-configured clients (Android, the iOS/macOS profiles,
-  browsers) don't need this.
+- **Stable addresses — done, one step short of advertisable.** The four existing
+  Primary IPs were imported into `terraform/primary_ips.tf` with `auto_delete =
+  false` on 2026-09-27: same addresses, no downtime, no added cost. Read commit
+  `278d84c` before touching the servers' `public_net` — the obvious version of this
+  change deletes both nodes' addresses, the plan does not show it, and the
+  `ignore_changes` that prevents it is load-bearing.
+
+  Two things remain. `delete_protection` is off, because the operator is the only
+  IP-configured client; turn it on before publishing IP-based setup, so a destroy or
+  node removal cannot release an address other people typed in. And survival across
+  a replacement is established from the provider source, not observed:
+  `terraform apply -replace='hcloud_server.node["hel1-a"]'` then `make deploy` would
+  prove it, at the cost of one node down for ~10 minutes behind failover.
 - **`max_qps_per_ip = 40` will break NATed groups.** Fine for a household. A
   university, an office or a CGNAT range is thousands of users behind one address,
   and 40 qps will drop their traffic. Raising it weakens the only abuse control

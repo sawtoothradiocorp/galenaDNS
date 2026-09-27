@@ -342,10 +342,12 @@ resolved moves to the next server when the current one fails. Addresses as of
 hostname `base.dns.swthrc.com`. How many servers a router accepts, and whether it
 fails over between them rather than only using the first, varies by firmware.
 
-**Until the nodes are on Hetzner Primary IPs, these addresses are not stable.** They
-belong to the servers, so replacing a node gives it a new address, and every
-IP-configured client pointed at the old one breaks silently — hostname clients just
-follow DNS. See BACKLOG.md.
+**These addresses survive a node being replaced.** They are Hetzner Primary IPs
+managed in `terraform/primary_ips.tf` with `auto_delete = false`, so a rebuilt server
+comes back on the same ones. They do *not* survive moving a node to another location
+(an address is routed to its site), removing a node from `nodes`, or `make destroy` —
+all three release them, deliberately, since no one but the operator has them typed
+in. Add `delete_protection` there before publishing IP-based setup to anyone else.
 
 ## Blocking
 
