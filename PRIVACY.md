@@ -200,6 +200,14 @@ Two further consequences, which apply to blocking wherever it happens:
   DNS-01 validation is done there, and Terraform manages the resolver's A/AAAA
   records in the same zone. AWS therefore sees the zone's contents and the
   short-lived `_acme-challenge` TXT records, but no client query ever reaches it.
+
+  Route 53 also runs the health checks that withdraw a dead node from DNS. Those
+  open a TCP connection to this node's port 853 every 30 seconds from AWS's checker
+  regions and close it again, which tells AWS whether the node is up — something the
+  Certificate Transparency log already made public when the certificate was issued.
+  No DNS query is sent, nothing about any client is involved, and the connections
+  arrive at the node like any other: unlogged. Route 53 **query logging is not
+  enabled** on the zone, so AWS is not recording who looks up the hostname either.
 - **Legal compulsion.** Server operators can be ordered to start logging. What
   this design gives you is that there is nothing retained to hand over about the
   past. It cannot promise anything about the future.

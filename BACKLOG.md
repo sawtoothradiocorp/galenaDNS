@@ -32,6 +32,26 @@ anyone's browsing is involved, and `make audit` would still pass unchanged.
 | **Upstream reachability** | `forward-first: no` means an unreachable Quad9 SERVFAILs *everything*, by design. There is no degraded mode to mask it. | Any successful resolution proves it. A total outage is the signal. |
 | **Blocklist freshness** | A feed that stopped updating still resolves fine. Nothing surfaces it. | Age of `/var/lib/unbound/rpz/*.rpz`, or the `rpz-update` timer's last success. |
 
+### The cheap half is already paid for
+
+`enable_dns_failover` created four Route 53 health checks, and every one of them
+publishes a `HealthCheckStatus` metric to CloudWatch in `us-east-1` whether anything
+reads it or not. An alarm on that metric plus an SNS topic with an email subscription
+is the shortest path from "a node was silently withdrawn" to "you were told" —
+roughly $0.10 per alarm per month, SNS email free, and about 20 lines of Terraform.
+
+Do this first, because right now failover is *worse* than no failover for one
+specific failure: a node can die, be withdrawn, and leave you running on one node at
+two nodes' cost, indefinitely, with every client working perfectly and nothing
+anywhere saying so. The mechanism that protects clients is also the mechanism that
+hides the outage.
+
+What it still does not cover, and why the prober below is not cancelled: a TCP check
+cannot see an expiring certificate, a dead unbound behind a live dnsdist, a broken
+DoH/DoH3/DoQ listener, a validator that stopped validating, or a stale blocklist.
+And certificate expiry hits **both** nodes at once, so it is precisely the failure
+failover cannot help with.
+
 ### Shape of the implementation
 
 You already own the right machine: **mtbaldy** (Hetzner Hillsboro).
@@ -66,7 +86,8 @@ broken" with no clue why. This is the strongest argument against pointing anyone
 else at it.
 
 Verified against the account's own `/v1/pricing` on 2026-09-27: **+$7.09/month**
-($6.49 `cx23` + $0.60 primary IPv4). See README "Costs".
+($6.49 `cx23` + $0.60 primary IPv4), plus $1.50/month for the second node's two
+health checks. See README "Costs".
 
 Pick `nbg1` or `hel1`. Both are close enough to `fsn1` that round-robin costs no
 noticeable latency, which avoids the multi-continent problem where a European
@@ -85,7 +106,7 @@ way, so this diversifies the *server*, not the *operator* — full diversity mea
 second provider. The latency cost is ~15-25 ms for central-European clients and
 negligible from the US.
 
-### Two nodes is not failover on its own
+### Two nodes is not failover on its own — done
 
 A second address in the record set gives *distribution*, not failover. DoT and DoH
 clients resolve the hostname once, pick an address and hold that connection, so a
@@ -94,10 +115,21 @@ per query. When a node dies, the clients on it fail and retry, and the behaviour
 varies by platform — Android will surface "Private DNS server cannot be accessed"
 before it recovers.
 
-**Route 53 health checks on TCP/853, attached to the record set**, are what convert
-two nodes into real failover: a dead node's address is withdrawn from DNS
-automatically. Roughly $0.50-0.75 per check per month, and it overlaps section 1 —
-a health check that fires is also a monitoring signal.
+**Done.** `terraform/dns.tf` now gives each node its own record set under a
+multivalue-answer routing policy with a Route 53 health check attached — TCP/853,
+30s interval, 3 failures — so a dead node's address is withdrawn automatically.
+`dns_record_ttl` dropped to 60, which puts worst-case client recovery at ~150s. Four
+checks (two nodes × two address families) at $0.75 each, so $3.00/month; `make
+nodes` prints the live configuration and `make apply` includes it in the estimate.
+See README "Failover".
+
+**What it does not cover, which is why section 1 still stands.** A TCP check proves
+the port accepts connections. It cannot see an expired certificate (no TLS handshake,
+and expiry hits both nodes at once anyway), a dead unbound behind a live dnsdist
+answering SERVFAIL, or a broken DoH/DoH3/DoQ listener. It also *withdraws* a node
+without *telling* anyone — a health check is a failover mechanism here, not an alert.
+Route 53 health checks can publish to CloudWatch and alarm, which is the cheapest
+path to turning this into the notification half of section 1 and worth doing next.
 
 ### Latency-based routing, once there is a third location
 
@@ -146,6 +178,21 @@ Not code. All of it blocks "lightly advertised", none of it blocks personal use.
 - **Rate limiting has never been tested for real.** `make test ARGS=--include-ratelimit`
   reports a false pass from mtbaldy because `rate_limit_exempt_cidrs` defaults to
   `admin_cidr`. Needs one run from another network.
+- **Failover is half-verified.** Withdrawal is proven: `hel1-a` was created before it
+  was deployed, its health checks read 0/16 healthy, and Route 53 dropped its address
+  from the record set on its own. Re-admission is proven by the same episode in
+  reverse once `make deploy` brings it up. What is *not* tested is the part clients
+  actually experience — killing a node with live DoT and DoH connections on it and
+  measuring how each platform behaves through the ~150s window. Android is the one to
+  watch: it surfaces "Private DNS server cannot be accessed" and its retry behaviour
+  is its own, not DNS's. `hcloud server poweroff galena-dns-hel1-a` is the test; the
+  reason it has not been run is that it needs a client pinned to that specific node,
+  which round-robin makes awkward to arrange deliberately.
+- **`make test` does not assert the record shape.** It tests each node by address, so
+  it would pass identically if the health checks were detached, the routing policy
+  reverted to a plain multi-value set, or a node were missing from DNS entirely — the
+  failover configuration is checked by nothing. A `dig` of the hostname compared
+  against `terraform output nodes` would catch all three.
 - **Cache headroom.** Steady state is 557 MB across ~895,000 RPZ entries. Caches are
   `256m`/`512m` and could go `512m`/`1024m`. Read README "Memory" first — RSS after
   a blocklist reload reads ~1366 MB because glibc keeps the freed arena, and

@@ -148,13 +148,21 @@ Two traps here, both of which fail loudly rather than quietly:
   real terminal. Run them from an interactive shell — piped or non-tty stdin gets
   a message telling you so, not an unattended apply.
 
-Terraform creates the A/AAAA records itself, so there is no manual DNS step.
-Both nodes' addresses go into one record set, which gives round-robin:
+Terraform creates the A/AAAA records itself, so there is no manual DNS step. Each
+node gets its own record set under the shared name, distinguished by a set
+identifier, with a multivalue-answer routing policy:
 
 ```
-base.dns.swthrc.com.   A      <ipv4 of each node>
-base.dns.swthrc.com.   AAAA   <ipv6 of each node>
+base.dns.swthrc.com.   A      <ipv4 of node>   set=fsn1-a   TTL 60   hc
+base.dns.swthrc.com.   A      <ipv4 of node>   set=hel1-a   TTL 60   hc
+base.dns.swthrc.com.   AAAA   <ipv6 of node>   set=fsn1-a   TTL 60   hc
+base.dns.swthrc.com.   AAAA   <ipv6 of node>   set=hel1-a   TTL 60   hc
 ```
+
+Route 53 returns up to 8 of the **healthy** values in random order, so clients still
+spread across nodes — and a dead node stops being handed out. `hc` is the attached
+health check; see "Failover" below for why the shape is one record set per node
+rather than one record set with two values.
 
 Reverse DNS is set too, in `terraform/rdns.tf`. Both addresses get a PTR of
 `base.dns.swthrc.com` rather than Hetzner's default
@@ -198,9 +206,76 @@ nodes = {
 }
 ```
 
-Then `make apply` — which adds the new address to the existing record set
-automatically — and `make deploy`. Each node gets its own certificate for the
-shared name, which is exactly why ACME here is DNS-01 and not HTTP-01.
+Then `make apply` — which adds the new record set and, above one node, its health
+checks — and `make deploy`. Each node gets its own certificate for the shared name,
+which is exactly why ACME here is DNS-01 and not HTTP-01.
+
+### Failover
+
+**A second node on its own gives distribution, not failover.** A DoT or DoH client
+resolves the hostname once, picks one address and holds that connection for its
+life, so it is pinned to a single node rather than alternating per query. When that
+node dies, its clients get errors until they retry, and Android surfaces "Private
+DNS server cannot be accessed" before it recovers.
+
+Route 53 health checks are what close that gap. Each record set carries one, and an
+address whose check is failing is not returned:
+
+| | |
+|---|---|
+| Probe | TCP connect to 853 (DoT), from Route 53's ~15 checker regions |
+| Unhealthy when | more than 18% of regions disagree, for 3 consecutive rounds |
+| Detection | `dns_health_check_interval` × `dns_health_check_failure_threshold` = 90s |
+| Client recovery | detection + `dns_record_ttl`, so ~150s at TTL 60 |
+| Cost | $0.75/check/month — one per node per address family, so $3.00 for two nodes |
+
+`make nodes` prints the live numbers rather than these, so the two cannot drift.
+
+Terraform state holds the configuration, not Route 53's verdict, so to ask what it
+actually thinks right now:
+
+```sh
+cd terraform && terraform output dns_health_checks     # ids, per node and family
+aws route53 get-health-check-status --health-check-id <id>
+```
+
+This is also why `dns_record_ttl` is 60 here and not the 300 default: the TTL is the
+half of the recovery time Route 53 cannot shorten for you, because resolvers that
+already cached the dead address keep serving it until it expires.
+
+One side effect worth knowing: **a node is withdrawn from DNS until it is deployed.**
+A freshly created node has no dnsdist, so its checks fail and Route 53 does not hand
+its address out. Before health checks, `make apply` put a dead address into rotation
+immediately and clients hit it until `make deploy` finished. Now the node joins when
+it starts answering, which makes adding a location a non-event for clients.
+
+**What a TCP check proves, and what it does not.** It proves the node is reachable
+and something is accepting DoT connections — which covers the failures that actually
+take a node out: the VM gone, the network gone, dnsdist dead. It does *not* prove the
+certificate is valid (Route 53 completes a TCP handshake, not a TLS one), that unbound
+is alive behind dnsdist (a dead backend still gets a green check and answers SERVFAIL),
+or that DoH, DoH3 and DoQ work (separate listeners, unprobed). Route 53 has no
+DNS-aware check type, so closing those gaps needs an external prober that speaks DNS —
+[BACKLOG.md](BACKLOG.md) section 1. Health checks remove a dead address automatically;
+that item is what watches for the quiet failures.
+
+Nothing in the firewall had to change: both layers already accept tcp/853 from
+anywhere, and neither rate-limits new connections on it.
+
+Turn it off with `enable_dns_failover = false`, or halve the cost with
+`dns_health_check_ipv6 = false` — which accepts that IPv4 can be healthy while
+IPv6 is broken, leaving v6-only clients pinned to a node that cannot answer them.
+It is ignored entirely with a single node: Route 53 returns every value when all of
+them are unhealthy, so one checked node behaves exactly like an unchecked one.
+
+**Migrating an existing single record set.** A record set with a set identifier
+cannot coexist with one without, so switching an already-deployed simple record set
+to this shape means Terraform deletes the old one and creates the new ones. The
+delete has no dependencies and the creates wait on the nodes and their health
+checks, so Terraform orders it correctly on its own; if it ever does not, Route 53
+rejects the create, the old record survives and the apply is safe to re-run. During
+the switch the name has no A/AAAA for under a minute — resolvers holding a cached
+answer are unaffected, fresh lookups fail.
 
 ## Client setup
 
@@ -639,17 +714,33 @@ unbound-control list_auth_zones           # what is actually loaded
 
 ## Costs
 
-Verified against the account's own `/v1/pricing` on 2026-09-27. **This account is
-billed in USD**, and a primary IPv4 is charged separately per node.
+Hetzner figures verified against the account's own `/v1/pricing` on 2026-09-27.
+**This account is billed in USD**, and a primary IPv4 is charged separately per node.
 
 | | Monthly |
 |---|---|
 | `cx23` (2 vCPU, 4 GB) in fsn1 / hel1 / nbg1 | $6.49 |
 | primary IPv4, per node | $0.60 |
-| **one node, as deployed** | **$7.09** |
-| **two nodes** | **$14.18** |
+| one node | $7.09 |
+| two nodes | $14.18 |
+| Route 53 health check, per node per address family | $0.75 |
+| **two nodes with failover, as deployed** | **$17.18** |
 
 Traffic is 20 TB included per node, which DNS will not come close to using.
+
+Health checks are billed at the **non-AWS endpoint** rate, because the endpoints are
+Hetzner addresses: $0.75/month against $0.50 for an AWS endpoint, and the 50 free
+checks apply only to AWS endpoints, so none of these are free. Setting
+`dns_health_check_interval = 10` bills as an "optional feature" at a further
+$2.00/check — four times the cost of the check, to save 60 seconds of detection.
+`dns_health_check_ipv6 = false` halves the $3.00 to $1.50; the trade is in
+"Failover" above.
+
+Route 53 query charges are left out of the estimate deliberately:
+multivalue-answer answers bill as standard queries at $0.40/million, and at TTL 60 a
+handful of clients generate thousands of queries a month, not millions. AWS prices
+are list prices from <https://aws.amazon.com/route53/pricing/>, read on 2026-09-27 —
+unlike the Hetzner ones they are not read back from the account.
 
 **US locations are a different product line and cost far more.** None of the `cx*`
 types are offered in `ash` or `hil`; the cheapest 4 GB type there is `cpx21` at
@@ -667,8 +758,9 @@ curl -H "Authorization: Bearer $HCLOUD_TOKEN" https://api.hetzner.cloud/v1/prici
 ## Backlog
 
 Open work, and what each item blocks, is in [BACKLOG.md](BACKLOG.md). The short
-version: there is no availability monitoring at all, and a single node means total
-DNS failure rather than degradation for anyone pointed at it.
+version: there is no availability monitoring at all. Nothing tells you the resolver
+is broken — health checks withdraw a dead node, but they do not tell you it died,
+and they cannot see a certificate about to expire.
 
 ## License
 

@@ -52,10 +52,13 @@ check: ## Validate everything that can be checked without spending money
 plan: ## Show what would be created (no changes, no cost; needs AWS creds to read the zone)
 	@$(TF) plan -input=false
 
-nodes: ## Print node addresses and the DNS records you must create
+nodes: ## Print node addresses, the DNS records, and whether failover is live
 	@$(TF) output -raw deploy_hint 2>/dev/null || true
 	@echo
 	@$(TF) output dns_records
+	@echo
+	@printf 'failover: '; $(TF) output -raw dns_failover 2>/dev/null || echo unknown
+	@echo
 
 # --------------------------------------------------------------------------
 # Billable — both prompt first
@@ -64,7 +67,8 @@ nodes: ## Print node addresses and the DNS records you must create
 apply: ## Create/update infrastructure (PROMPTS — this costs money)
 	@$(TF) plan -input=false -out=.tfplan
 	@echo
-	@echo "This creates billable Hetzner resources."
+	@echo "This creates billable Hetzner resources, and billable Route 53 health"
+	@echo "checks when enable_dns_failover is on."
 	@echo "Estimated cost: $$($(TF) output -raw estimated_monthly_cost 2>/dev/null || echo 'run make plan first')"
 	@echo
 	@[ -t 0 ] || { \

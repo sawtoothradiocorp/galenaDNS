@@ -35,13 +35,121 @@ variable "route53_zone_name" {
 }
 
 variable "dns_record_ttl" {
-  description = "TTL for the resolver's A/AAAA records. Kept short so a node can be replaced without clients caching a dead address for long."
+  description = <<-EOT
+    TTL for the resolver's A/AAAA records. Kept short so a node can be replaced
+    without clients caching a dead address for long.
+
+    With enable_dns_failover on, this is the second half of the recovery time and
+    the half Route 53 cannot shorten for you. Route 53 withdraws a dead node's
+    address within dns_health_check_interval * dns_health_check_failure_threshold
+    seconds, but every resolver that already answered from cache keeps handing out
+    the dead address for up to another TTL. 60 makes the total under two minutes;
+    300 makes it over six.
+  EOT
   type        = number
   default     = 300
 
   validation {
     condition     = var.dns_record_ttl >= 60 && var.dns_record_ttl <= 86400
     error_message = "dns_record_ttl must be between 60 and 86400 seconds."
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Failover
+# ---------------------------------------------------------------------------
+# Two nodes in one record set give DISTRIBUTION, not failover. A DoT or DoH client
+# resolves the hostname once, picks one address and holds that connection, so it is
+# pinned to a single node rather than alternating per query. When that node dies the
+# client sees errors until it retries, and on Android it surfaces as "Private DNS
+# server cannot be accessed" first.
+#
+# Health checks attached to the record set are what close that gap: the dead node's
+# address stops being returned at all. See dns.tf for exactly what a TCP check on
+# 853 does and does not prove.
+
+variable "enable_dns_failover" {
+  description = <<-EOT
+    Attach Route 53 health checks to the resolver's record sets so a node that
+    stops answering on tcp/853 is withdrawn from DNS automatically.
+
+    Billable, and the reason this is a variable rather than always-on: $0.75 per
+    check per month (non-AWS endpoint list price, checked 2026-09-27), which is one
+    check per node, doubled if dns_health_check_ipv6 is on. `make apply` folds it
+    into the printed estimate before you confirm.
+
+    Ignored with a single node — Route 53 returns every value when all of them are
+    unhealthy, so one health-checked node behaves identically to an unchecked one.
+    Also ignored when manage_dns_records is false, since nothing Terraform owns
+    would consult the check.
+  EOT
+  type        = bool
+  default     = true
+}
+
+variable "dns_health_check_ipv6" {
+  description = <<-EOT
+    Health-check each node's IPv6 address as well as its IPv4 one, and point the
+    AAAA record at the v6 check. Doubles the health-check cost.
+
+    On by default because the two families fail independently: a listener that
+    binds 0.0.0.0 but not [::], a wrong ip6 nftables rule, or a lost /64 route
+    leaves IPv4 green while v6-only clients — a phone on a mobile network — get a
+    node that cannot answer them. Set false to halve the bill and accept that.
+
+    With this off, the AAAA record uses the IPv4 check: "the node is up" is a
+    better approximation for it than no check at all.
+  EOT
+  type        = bool
+  default     = true
+}
+
+variable "dns_health_check_port" {
+  description = "TCP port the health check connects to. 853 is DoT, which every node must serve; 443 (DoH) would do equally well. The check only completes a TCP handshake, so the port choice is about which listener you want to prove is up."
+  type        = number
+  default     = 853
+
+  validation {
+    condition     = var.dns_health_check_port == 853 || var.dns_health_check_port == 443
+    error_message = "dns_health_check_port must be 853 (DoT) or 443 (DoH) — the only TCP ports this resolver listens on."
+  }
+}
+
+variable "dns_health_check_interval" {
+  description = <<-EOT
+    Seconds between health checks, from each of Route 53's ~15 checker regions.
+    Route 53 permits only 30 or 10.
+
+    10 is a billable "optional feature" at $2.00/month per check on a non-AWS
+    endpoint — nearly four times the cost of the check itself — to save 60 seconds
+    of detection time. Immutable: changing it replaces the check, which changes its
+    ID, which updates the record pointing at it.
+  EOT
+  type        = number
+  default     = 30
+
+  validation {
+    condition     = var.dns_health_check_interval == 30 || var.dns_health_check_interval == 10
+    error_message = "dns_health_check_interval must be 30 or 10 (Route 53 allows no other value). 10 is billed as an optional feature."
+  }
+}
+
+variable "dns_health_check_failure_threshold" {
+  description = <<-EOT
+    Consecutive failed rounds before a node is considered down. Detection takes
+    roughly this many times dns_health_check_interval seconds.
+
+    3 rather than 1 because the alternative is flapping: a single slow round trip
+    from a checker region would withdraw a healthy node, and every client pinned to
+    it would reconnect for nothing. Route 53 already requires agreement across
+    checker regions within one round, so this guards against time, not geography.
+  EOT
+  type        = number
+  default     = 3
+
+  validation {
+    condition     = var.dns_health_check_failure_threshold >= 1 && var.dns_health_check_failure_threshold <= 10
+    error_message = "dns_health_check_failure_threshold must be between 1 and 10."
   }
 }
 
