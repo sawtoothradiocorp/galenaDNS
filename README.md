@@ -169,10 +169,17 @@ ACME does not wait on these — certbot creates and removes its own
 `_acme-challenge` TXT record — so you can deploy immediately:
 
 ```sh
+make apply      # ALSO required after any tfvars change — see below
 make deploy     # push config, issue the certificate, start everything
 make audit      # assert the privacy properties on the server
 make test       # verify all four transports, DNSSEC and blocking
 ```
+
+**Any change to `terraform.tfvars` or `variables.tf` needs `make apply` before
+`make deploy`, even when it changes no infrastructure.** The node's settings are
+pushed from `terraform output`, and outputs are stored in state rather than
+recomputed on demand — so without the apply, `make deploy` would push the previous
+values. It refuses instead of doing that quietly.
 
 On the first run consider `acme_staging = true` in `terraform.tfvars` to avoid
 burning Let's Encrypt rate limits while you get DNS-01 working, then flip it to
@@ -553,6 +560,8 @@ scripts/            run from your machine: test-resolver.sh, make-mobileconfig.s
 |---|---|
 | `certbot` fails during deploy | IAM key lacks `route53:ChangeResourceRecordSets` on the zone, or the name is not in a Route 53 hosted zone |
 | `terraform plan` fails on the zone lookup | AWS credentials missing from your environment, or the key lacks `route53:ListHostedZonesByName` |
+| `make deploy` refuses, saying state is behind the configuration | Outputs live in state, so a tfvars change reaches a node only after `make apply` recomputes them. Run `make apply` (it may report no infrastructure changes), then deploy |
+| `make deploy` refuses, saying plan failed | Usually expired AWS SSO. It refuses rather than pushing settings it cannot confirm are current |
 | `apply` fails with a record conflict | The A/AAAA record already exists outside state. Delete it, or import it, or set `manage_dns_records = false` |
 | Renewal fails ~60 days later | The certbot systemd drop-in is missing; check `systemctl cat certbot.service` |
 | Renewal fails within hours | Temporary SSO/STS credentials were installed. `make deploy` blocks this, but check `/etc/letsencrypt/aws.credentials` for a session token |

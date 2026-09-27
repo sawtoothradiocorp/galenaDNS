@@ -110,6 +110,29 @@ deploy: ## Push node/ and run bootstrap.sh on every node
 		echo "       and handle ACME yourself."; \
 		exit 1; \
 	fi
+	@# node.env and rpz-manifest.tsv below come from `terraform output`, and outputs
+	@# live in STATE, not in the config. So a change to terraform.tfvars or
+	@# variables.tf does NOT reach a node until `make apply` writes the recomputed
+	@# outputs to state — and without this guard `make deploy` pushes the previous
+	@# values and reports success, which is exactly how a posture change can appear
+	@# to deploy while the node keeps running the old one. `plan -detailed-exitcode`
+	@# exits 2 when anything, outputs included, is not current.
+	@$(TF) plan -input=false -detailed-exitcode >/dev/null 2>&1; \
+	case $$? in \
+		0) ;; \
+		2) echo "ERROR: Terraform state is behind the configuration, so the settings"; \
+		   echo "       pushed to the node would be the PREVIOUS ones. Run 'make apply'"; \
+		   echo "       first (it may report no infrastructure changes — outputs still"; \
+		   echo "       need to be written to state), then 'make deploy'."; \
+		   echo "       See what differs with: make plan"; \
+		   exit 1 ;; \
+		*) echo "ERROR: 'terraform plan' failed, so whether the settings about to be"; \
+		   echo "       pushed are current cannot be determined. Refusing rather than"; \
+		   echo "       deploying possibly-stale config. Common cause: expired AWS SSO"; \
+		   echo "       credentials — run 'aws sso login --profile <name>'."; \
+		   echo "       Diagnose with: make plan"; \
+		   exit 1 ;; \
+	esac
 	@ips=$$($(TF) output -json nodes | python3 -c 'import json,sys;[print(v["ipv4"]) for v in json.load(sys.stdin).values()]'); \
 	[ -n "$$ips" ] || { echo "No nodes. Run 'make apply' first."; exit 1; }; \
 	for ip in $$ips; do \
