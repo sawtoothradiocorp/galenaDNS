@@ -50,22 +50,35 @@ output "deploy_hint" {
   value       = local.deploy_hint
 }
 
-output "estimated_monthly_eur" {
-  description = "Rough Hetzner list price for the declared nodes, EU pricing, excluding VAT and traffic overage."
-  value = format("~EUR %.2f/month for %d node(s)", sum([
-    for k, n in var.nodes : lookup({
-      cx23  = 5.49
-      cx33  = 8.49
-      cx43  = 15.99
-      cx53  = 29.49
-      cax11 = 5.99
-      cax21 = 10.49
-      cax31 = 20.99
-      cax41 = 40.99
-      cpx22 = 19.49
-      cpx32 = 35.49
-      cpx42 = 69.49
-      cpx52 = 100.49
+# Prices verified against the account's own /v1/pricing endpoint on 2026-09-27.
+# Two things this got wrong before and which are easy to get wrong again: the
+# account is billed in USD, not EUR, and a primary IPv4 is charged separately at
+# $0.60/node/month on top of the server price. The figure below is what `make
+# apply` shows you before you spend anything, so understating it defeats the
+# point of printing it. Re-check with:
+#   curl -H "Authorization: Bearer $HCLOUD_TOKEN" https://api.hetzner.cloud/v1/pricing
+#
+# US locations (ash, hil) are a different and much more expensive product line —
+# the cheapest 4 GB type there is cpx21 at $37.49 against cx23's $6.49 in the EU.
+# None of the cx* types are offered there at all, so a US node is not a one-line
+# change to var.nodes; see README "Adding a second location later".
+output "estimated_monthly_cost" {
+  description = "Hetzner list price for the declared nodes, including the per-node primary IPv4. USD, excluding traffic overage."
+  value = format("~USD %.2f/month for %d node(s), including $0.60/node for primary IPv4", sum([
+    for k, n in var.nodes : 0.60 + lookup({
+      cx23  = 6.49
+      cx33  = 9.99
+      cx43  = 19.99
+      cx53  = 37.99
+      cax11 = 6.99
+      cax21 = 12.49
+      cax31 = 24.99
+      cax41 = 49.99
+      cpx21 = 37.49
+      cpx22 = 22.99
+      cpx31 = 73.49
+      cpx32 = 41.99
+      ccx13 = 50.99
     }, n.server_type, 0)
   ]), length(var.nodes))
 }

@@ -65,7 +65,7 @@ apply: ## Create/update infrastructure (PROMPTS — this costs money)
 	@$(TF) plan -input=false -out=.tfplan
 	@echo
 	@echo "This creates billable Hetzner resources."
-	@echo "Estimated cost: $$($(TF) output -raw estimated_monthly_eur 2>/dev/null || echo 'run make plan first')"
+	@echo "Estimated cost: $$($(TF) output -raw estimated_monthly_cost 2>/dev/null || echo 'run make plan first')"
 	@echo
 	@[ -t 0 ] || { \
 	  echo "Not attached to a terminal, so there is nothing to confirm on."; \

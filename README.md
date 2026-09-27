@@ -639,9 +639,30 @@ unbound-control list_auth_zones           # what is actually loaded
 
 ## Costs
 
-One `cx23` in an EU location is about **€5.49/month** plus VAT. `make apply`
-prints an estimate and requires you to type `yes`; `make destroy` asks twice.
-Traffic is included up to the plan's allowance.
+Verified against the account's own `/v1/pricing` on 2026-09-27. **This account is
+billed in USD**, and a primary IPv4 is charged separately per node.
+
+| | Monthly |
+|---|---|
+| `cx23` (2 vCPU, 4 GB) in fsn1 / hel1 / nbg1 | $6.49 |
+| primary IPv4, per node | $0.60 |
+| **one node, as deployed** | **$7.09** |
+| **two nodes** | **$14.18** |
+
+Traffic is 20 TB included per node, which DNS will not come close to using.
+
+**US locations are a different product line and cost far more.** None of the `cx*`
+types are offered in `ash` or `hil`; the cheapest 4 GB type there is `cpx21` at
+$37.49/month, over five times the EU price. So a node near US users is not the
+one-line change to `var.nodes` that a second EU node is — at that price another
+provider is worth comparing.
+
+`make apply` prints the estimate and requires you to type `yes`; `make destroy`
+asks twice. Re-check pricing yourself with:
+
+```sh
+curl -H "Authorization: Bearer $HCLOUD_TOKEN" https://api.hetzner.cloud/v1/pricing
+```
 
 ## License
 
