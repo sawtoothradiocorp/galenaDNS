@@ -637,7 +637,7 @@ Plus a memory report, since the blocklists are what will run you out of RAM firs
 
 ```sh
 make test
-make test ARGS=--include-ratelimit    # will dynblock your own address
+make test ARGS=--include-ratelimit    # floods each node; run it from a non-exempt address
 ```
 
 It tests every node separately, by address — testing the hostname would exercise
@@ -764,11 +764,23 @@ means config changes are a re-deploy rather than a server rebuild, and
 the same 4 GB (this account's `/v1/pricing`, 2026-09-27), and this workload does not
 need the extra CPU.
 
-**Rate limiting is two layers.** `MaxQPSIPRule` is an inline per-IP ceiling that
-needs no state. Dynamic blocks catch sustained abuse but are computed from
-dnsdist's in-RAM ring, which is the only place client IPs and query names exist
-at all — see PRIVACY.md. Set `dynblock_ring_entries = 0` to eliminate that window
-entirely at the cost of dynamic blocking.
+**Rate limiting is one per-address token bucket, sized for a household.** The
+assumption, set on 2026-09-27: one client address is a household or small office of
+up to 50 devices. `MaxQPSIPRule` gives each address (each /64 for IPv6) 50 queries
+per second sustained and a burst of 500 — several heavy page loads at once; the
+arithmetic is in `terraform/variables.tf`. Until then the burst was unset, so
+dnsdist defaulted it to the rate: 40 at once, then drops. Measured against that:
+a 300-query household burst got 40 answers and then **dnsdist closed the DoT
+connection** — which is what a drop does on DoT, and why the burst matters more
+than the rate. `make test ARGS=--include-ratelimit` now checks both sides from a
+non-exempt address.
+
+Dynamic blocks are off (`dynblock_ring_entries = 0`). They need dnsdist's query
+ring, which pairs client IPs with query names, and at this resolver's traffic
+5,000 entries was hours of history, not seconds — see PRIVACY.md. The NXDOMAIN
+rule that shared it never worked at all: rcode rules read the *response* ring, and
+responses are not recorded. A university or CGNAT range behind one address needs a
+different limit; see BACKLOG.md.
 
 **ICMP is allowed on purpose.** QUIC depends on path MTU discovery. Dropping
 "fragmentation needed" and ICMPv6 "packet too big" produces the worst class of

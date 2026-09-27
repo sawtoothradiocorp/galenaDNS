@@ -391,8 +391,11 @@ if [[ -r $dconf ]]; then
   # number in the file is the 0 in the disabled branch, which misreported a
   # 5000-entry ring as 0.
   ring=$(grep -oE '^local ringEntries = [0-9]+' "$dconf" | grep -oE '[0-9]+$' || echo "?")
-  if grep -q 'recordResponses = false' "$dconf"; then
+  if [[ $ring == 0 ]]; then
+    pass "dnsdist records no queries or responses" "ring off: no client IP is ever recorded with a query name"
+  elif grep -q 'recordResponses = false' "$dconf"; then
     pass "dnsdist ring records no responses" "ring=${ring} queries, responses off"
+    note "a ${ring}-entry ring is a COUNT, not a time: at low traffic it holds hours of client IPs + names"
   else
     warn "dnsdist ring records no responses" "recordResponses is not explicitly false"
   fi

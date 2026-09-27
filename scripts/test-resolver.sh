@@ -19,6 +19,8 @@ set -uo pipefail
 DOMAIN=""
 IP=""
 INCLUDE_RATELIMIT=0
+RL_QPS=50
+RL_BURST=500
 INSECURE=0
 DOH_PATH="/dns-query"
 MALWARE_CANARY=""
@@ -48,8 +50,12 @@ Usage: $0 --domain <fqdn> [--ip <addr>] [options]
                         the upstream and an unfiltered control; pass this to pin it.
   --allowlist FILE      Allowlist RPZ zone to read a test domain from.
                         Defaults to node/unbound/rpz/allowlist.rpz.
-  --include-ratelimit   Also test rate limiting. This will get your address
-                        dynamically blocked for the configured duration.
+  --include-ratelimit   Also test rate limiting: a household burst that must be
+                        answered in full, then a flood that must be cut to the
+                        configured burst + rate. If dynamic blocks are on, the
+                        flood can get your address blocked for their duration.
+  --rate QPS/BURST      The configured limit to check against (default 50/500).
+                        `make test` passes the deployed values.
   --insecure            Skip certificate validation (for acme_staging = true).
   -h, --help            This.
 EOF
@@ -64,6 +70,7 @@ while (($#)); do
     --doh-path) DOH_PATH=$2; shift 2 ;;
     --allowlist) ALLOWLIST_FILE=$2; shift 2 ;;
     --include-ratelimit) INCLUDE_RATELIMIT=1; shift ;;
+    --rate) RL_QPS=${2%/*}; RL_BURST=${2#*/}; shift 2 ;;
     --insecure) INSECURE=1; shift ;;
     -h | --help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
@@ -419,26 +426,103 @@ fi
 section "Rate limiting"
 # ===========================================================================
 if ((INCLUDE_RATELIMIT == 0)); then
-  skip "rate limiting" "opt in with --include-ratelimit (it will block your IP)"
-elif ! have kdig; then
-  skip "rate limiting" "kdig missing"
+  skip "rate limiting" "opt in with --include-ratelimit (floods the node from your address)"
+elif ! have python3; then
+  skip "rate limiting" "python3 missing — the pipelined DoT harness needs it"
 else
-  printf '       %ssending a burst; if your address is in rate_limit_exempt_cidrs\n' "$D"
-  printf '       (it defaults to admin_cidr) nothing will be dropped.%s\n' "$N"
-  sent=0 answered=0
-  for _ in $(seq 1 200); do
-    sent=$((sent + 1))
-    ta_b=(); IFS=$'\n' read -r -d '' -a ta_b < <(tls_args; printf '\0')
-    if kdig "${ta_b[@]}" +timeout=2 +retry=0 "@${TARGET}" "burst-${RANDOM}.${CONTROL}" A 2>/dev/null \
-      | grep -q 'status:'; then
-      answered=$((answered + 1))
-    fi
-  done
-  dropped=$((sent - answered))
-  if ((dropped > 0)); then
-    pass "rate limiting engages" "${dropped}/${sent} queries dropped"
+  # Sequential kdig calls cannot test this: each opens a new TLS connection, which
+  # from far away is well under 10 queries a second — below any sane limit — so
+  # the old version of this test could never see a drop even from a non-exempt
+  # address. This pipelines queries back to back over ONE DoT connection
+  # (RFC 7766) and counts answers by DNS ID, which is the only way to put a known
+  # number of queries in front of dnsdist within a fraction of a second.
+  #
+  # Two phases, matching the token bucket MaxQPSIPRule implements:
+  #   1. household — 300 queries at once must ALL be answered, on a connection
+  #      that stays open (under the burst);
+  #   2. after a pause long enough to refill the bucket, a flood of 900 must be
+  #      cut off, having answered no more than burst + qps x elapsed.
+  #
+  # Why no lower bound on phase 2: on DoT, dnsdist answers a dropped query by
+  # CLOSING THE CONNECTION, and answers already in flight die with it. Measured
+  # 2026-09-27 against a 40/40 limit: phase 1 got exactly 40 before the close,
+  # but phase 2 got only 10 of a refilled 40. Counting answers on a connection
+  # that was closed under them is a lower bound on nothing.
+  # 900 stays under setMaxTCPQueriesPerConnection(1000), so every missing answer
+  # is a rate-limit drop and not dnsdist closing the connection. Every query is
+  # for $CONTROL, served from the packet cache: no load reaches the upstream.
+  # Long enough for an emptied bucket to refill completely, plus margin.
+  RL_PAUSE=$(( RL_BURST / RL_QPS + 2 ))
+  printf '       %shousehold burst of 300, then a flood of 900 after a %ss refill pause;\n' "$D" "$RL_PAUSE"
+  printf '       an address in rate_limit_exempt_cidrs (default: admin_cidr) sees no drops.%s\n' "$N"
+  read -r h_sent h_ans f_sent f_ans elapsed h_closed f_closed < <(python3 - "$TARGET" "$DOMAIN" "$CONTROL" "$INSECURE" "$RL_PAUSE" <<'PY'
+import select, socket, ssl, struct, sys, time
+target, domain, name, insecure, pause = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4] == "1", int(sys.argv[5])
+
+def conn():
+    ctx = ssl.create_default_context()
+    if insecure:
+        ctx.check_hostname, ctx.verify_mode = False, ssl.CERT_NONE
+    return ctx.wrap_socket(socket.create_connection((target, 853), timeout=10), server_hostname=domain)
+
+def query(qid):
+    q = struct.pack(">HHHHHH", qid, 0x0100, 1, 0, 0, 0)
+    q += b"".join(bytes([len(l)]) + l.encode() for l in name.split(".")) + b"\0" + struct.pack(">HH", 1, 1)
+    return struct.pack(">H", len(q)) + q
+
+def phase(n, wait=4.0):
+    # dnsdist answers a DROP on DoT by closing the connection, so a reset is an
+    # expected outcome here, not an error: count what arrived before it.
+    s = conn()
+    closed = 0
+    try:
+        s.sendall(b"".join(query(i) for i in range(n)))
+    except OSError:
+        closed = 1
+    t0, buf, seen, last = time.time(), b"", set(), time.time()
+    s.setblocking(False)
+    while not closed and time.time() - last < wait and len(seen) < n:
+        if select.select([s], [], [], 0.25)[0] or s.pending():
+            try:
+                chunk = s.recv(65536)
+            except ssl.SSLWantReadError:
+                continue
+            except OSError:
+                closed = 1
+                break
+            if not chunk:
+                closed = 1
+                break
+            buf += chunk
+            while len(buf) >= 2 and len(buf) >= 2 + struct.unpack(">H", buf[:2])[0]:
+                ln = struct.unpack(">H", buf[:2])[0]
+                seen.add(struct.unpack(">H", buf[2:4])[0])
+                buf, last = buf[2 + ln:], time.time()
+    s.close()
+    return len(seen), last - t0, closed
+
+h_ans, _, h_closed = phase(300)
+time.sleep(pause)
+f_ans, el, f_closed = phase(900)
+print(300, h_ans, 900, f_ans, f"{el:.1f}", h_closed, f_closed)
+PY
+  )
+  if [[ -z ${h_sent:-} ]]; then
+    fail "rate limiting" "the test harness could not connect over DoT"
   else
-    fail "rate limiting engages" "all ${sent} queries answered — is your IP exempt, or the limit too high?"
+    expect_max=$(( RL_BURST + RL_QPS * ${elapsed%.*} + RL_QPS + 50 ))
+    if ((h_ans == h_sent)); then
+      pass "household burst answered in full" "${h_ans}/${h_sent} at once (burst allowance ${RL_BURST})"
+    else
+      fail "household burst answered in full" "only ${h_ans}/${h_sent}$( ((h_closed)) && echo ', then dnsdist closed the connection') — the burst allowance is too small for a busy household"
+    fi
+    if ((f_ans == f_sent)); then
+      fail "rate limiting engages" "all ${f_sent} flood queries answered — is this address exempt, or the limit too high?"
+    elif ((f_ans > expect_max)); then
+      fail "rate limiting engages" "${f_ans}/${f_sent} answered in ${elapsed}s — more than burst ${RL_BURST} + ${RL_QPS}/s allows"
+    else
+      pass "rate limiting engages" "${f_ans}/${f_sent} answered before the cut-off$( ((f_closed)) && echo ' (connection closed)'), within burst ${RL_BURST} + ${RL_QPS}/s"
+    fi
   fi
 fi
 

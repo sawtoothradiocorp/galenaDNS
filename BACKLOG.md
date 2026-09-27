@@ -131,10 +131,13 @@ Not code. All of it blocks "lightly advertised", none of it blocks personal use.
   a replacement is established from the provider source, not observed:
   `terraform apply -replace='hcloud_server.node["hel1-a"]'` then `make deploy` would
   prove it, at the cost of one node down for ~10 minutes behind failover.
-- **`max_qps_per_ip = 40` will break NATed groups.** Fine for a household. A
-  university, an office or a CGNAT range is thousands of users behind one address,
-  and 40 qps will drop their traffic. Raising it weakens the only abuse control
-  there is. A real decision, currently made by default.
+- **Per-address rate limit — decided for households, 2026-09-27.** One address is
+  taken to be a household or small office of up to 50 devices: 50 q/s sustained,
+  burst 500 (README "Design choices"). Dynamic blocks and their query ring are off,
+  which removed the only place client IPs and query names were recorded together.
+  A university or CGNAT range — thousands behind one address — would be throttled;
+  serving those means a much larger limit or per-network exemptions, and is a
+  separate decision.
 - **Abuse-handling posture, written down before the first complaint.** Hetzner will
   forward complaints with a deadline. The honest answer — "we retain nothing, so we
   cannot tell you which user did this" — is much better delivered from a prepared
@@ -145,7 +148,8 @@ Not code. All of it blocks "lightly advertised", none of it blocks personal use.
   catches crude tunnelling and not a patient adversary. Worth doing; worth not
   overselling.
 - **Privacy policy naming a data controller.** IP addresses are personal data under
-  GDPR and they transit the dynblock rings. A public EU service plausibly needs
+  GDPR: they pass through every connection, and the per-address rate counters
+  hold them for 5-15 minutes after an address's last query. A public EU service plausibly needs
   this, which means attaching a real identity or entity. A personal-exposure
   decision, not a technical one.
 - **Legal reading, specific to German hosting.** Sony sued Quad9 in Germany over
@@ -160,9 +164,12 @@ Not code. All of it blocks "lightly advertised", none of it blocks personal use.
 
 ## 4. Smaller, measured, not urgent
 
-- **Rate limiting has never been tested for real.** `make test ARGS=--include-ratelimit`
-  reports a false pass from mtbaldy because `rate_limit_exempt_cidrs` defaults to
-  `admin_cidr`. Needs one run from another network.
+- **Rate limiting — tested for real, 2026-09-27.** The old test could never have
+  found a limit: 200 sequential kdig calls, each a new TLS handshake, run well under
+  10 q/s from far away. It now pipelines queries over one DoT connection. Against
+  the old 40/no-burst config, from a non-exempt address, a 300-query household
+  burst got 40 answers and a closed connection. `rate_limit_exempt_cidrs` still
+  defaults to `admin_cidr`, so run it from anywhere else.
 - **Failover is verified in the mechanism, not in the client.** Both directions were
   observed for real during the deploy that introduced it: `hel1-a` existed before it
   was deployed, so its checks read 0/16 healthy and Route 53 dropped its address from

@@ -17,10 +17,14 @@
 -- That discloses that this host exists and what version it runs. Off.
 setSecurityPollSuffix("")
 
--- The ring buffers are the ONLY place client IPs and query names exist anywhere
--- in this system, and only in RAM, for the few seconds the window covers. They
--- are required for dynamic blocks; MaxQPSIPRule below works without them.
--- Responses are not recorded at all. PRIVACY.md documents this window.
+-- The ring buffers are the only place a client IP and a query name would ever be
+-- recorded together. They exist only for dynamic blocks and are OFF by default
+-- (dynblock_ring_entries = 0), so the else branch below is what normally runs.
+--
+-- If turned on, remember the ring holds a number of ENTRIES, not a span of time:
+-- at low traffic 5000 entries is hours of history, not the seconds a rate window
+-- suggests. Measured on this resolver on 2026-09-27: ~2 hours on fsn1-a.
+-- MaxQPSIPRule below works without any ring.
 local ringEntries = ${GALENA_DYNBLOCK_RING_ENTRIES}
 if ringEntries > 0 then
   setRingBuffersSize(ringEntries, 1)
@@ -162,25 +166,32 @@ if ${GALENA_EXEMPT_COUNT} > 0 then
 end
 
 -- Inline per-IP ceiling. Needs no ring buffer and no state beyond a counter.
--- Keep this generous: a NATed office or a CGNAT range shares one address, so a
--- tight limit punishes ordinary users before it inconveniences an abuser.
-addAction(MaxQPSIPRule(${GALENA_MAX_QPS_PER_IP}), DropAction())
+-- A token bucket per address: refills at the sustained rate, holds the burst.
+-- Sized for a household or small office of up to 50 devices behind one address —
+-- the reasoning is in terraform/variables.tf above max_qps_per_ip. The burst
+-- argument matters most: without it dnsdist sets burst = rate, and several
+-- people loading pages at once got dropped. /32 for IPv4, /64 for IPv6 (one LAN).
+-- Runs before the packet cache, so cached answers count too.
+addAction(MaxQPSIPRule(${GALENA_MAX_QPS_PER_IP}, 32, 64, ${GALENA_MAX_QPS_BURST_PER_IP}), DropAction())
 
 -- A public resolver is a reflection-attack amplifier if left open on TCP too.
 setMaxTCPConnectionsPerClient(20)
 setMaxTCPQueriesPerConnection(1000)
 setMaxTCPConnectionDuration(600)
 
--- Dynamic blocks catch sustained abuse that a per-query ceiling only throttles.
--- These read the in-RAM ring, so they exist only when ringEntries > 0.
+-- Dynamic blocks cut off, for a while, an address that a per-query ceiling only
+-- throttles. They read the in-RAM ring, so they exist only when ringEntries > 0.
+--
+-- There is deliberately no setRCodeRate(NXDOMAIN, ...) rule here, though there
+-- was one. dnsdist evaluates rcode rules on the RESPONSE ring, responses are not
+-- recorded (above), so it could never fire — while the comment beside it claimed
+-- protection against random-subdomain floods. Recording responses to make it work
+-- would retain answers per client, which this resolver does not do. The per-IP
+-- ceiling bounds how much of such a flood any one address can push through.
 if ringEntries > 0 then
   local dbr = dynBlockRulesGroup()
   dbr:setQueryRate(${GALENA_DYNBLOCK_QPS}, ${GALENA_DYNBLOCK_WINDOW},
     "Sustained query rate exceeded", ${GALENA_DYNBLOCK_DURATION})
-  -- A flood of NXDOMAINs is the signature of random-subdomain (water torture)
-  -- attacks, which are aimed through us at someone else's authoritative servers.
-  dbr:setRCodeRate(DNSRCode.NXDOMAIN, ${GALENA_DYNBLOCK_QPS}, ${GALENA_DYNBLOCK_WINDOW},
-    "Sustained NXDOMAIN rate exceeded", ${GALENA_DYNBLOCK_DURATION})
   dbr:excludeRange({ ${GALENA_EXEMPT_LIST} })
 
   function maintenance()
@@ -199,8 +210,8 @@ end
 setKey("${GALENA_CONSOLE_KEY}")
 controlSocket("127.0.0.1:5199")
 setConsoleACL({ "127.0.0.1/32", "::1/128" })
--- The console can display recent queries via grepq(); it is reachable only from
--- localhost, which means only over SSH. Noted in PRIVACY.md.
+-- grepq() on the console shows recent queries from the ring — nothing, with the
+-- ring off (the default). Reachable only from localhost, which means only over SSH.
 setConsoleOutputMaxMsgSize(1000000)
 
 -- ---------------------------------------------------------------------------

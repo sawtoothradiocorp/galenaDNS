@@ -42,21 +42,27 @@ that knew nothing at all could not answer a query or stop an attack.
 
 | Data | Where | Lifetime |
 |---|---|---|
-| Recent query names and client IPs | dnsdist ring buffer, 5,000 entries by default | Overwritten continuously — seconds at any real traffic level. Never written to disk. Needed for dynamic blocking. |
-| Client IPs currently rate-limited | dnsdist dynamic block table | The block duration, 60s by default |
-| Per-IP query counters | dnsdist `MaxQPSIPRule` | A sliding one-second window |
+| Client IPs and how fast each is querying — **no query names** | dnsdist `MaxQPSIPRule`, one token bucket per address (IPv6: per /64) | Expires 5 minutes after the address's last query (dnsdist's default); the cleanup pass visits a tenth of entries a minute, so reclaiming it can take up to ~10 minutes more |
 | Query names and answers | unbound's DNS cache | The record's TTL. **Not associated with any client** — the cache cannot say who asked. |
 | Query names and answers | dnsdist's packet cache, 100,000 entries by default | The record's TTL, capped at 24h and 1h for negative answers. **Not associated with any client** — keyed by the question alone. Flushed whenever a blocklist reloads. `dnsdist_packet_cache_entries = 0` removes it. |
 | Client IPs of open connections | Linux conntrack and socket tables | The life of the connection. Unavoidable in any networked service. |
 | Warnings and errors | journald, in RAM | Until reboot, capped at 16 MB. `MaxLevelStore=warning`, so routine operation logs nothing. |
 
-Responses are not recorded in the ring at all (`recordResponses = false`), so
-what was *answered* is never retained even transiently.
+**No client IP is ever recorded together with a query name.** A query is handled
+and forgotten; the only per-client state is a counter.
 
-Set `dynblock_ring_entries = 0` in `terraform.tfvars` and the ring disappears
-entirely: no query name or client IP exists anywhere in the system, at any point.
-The cost is that dynamic blocking stops working, leaving only the per-IP rate
-ceiling, so a sustained flood is throttled but never blocked outright.
+That was not true until 2026-09-27, and this document said otherwise. dnsdist kept
+a 5,000-entry ring of recent queries — client IP and name together — for dynamic
+blocking, and this table described its lifetime as "seconds at any real traffic
+level". A ring holds a *count*, not a span of time: measured at this resolver's
+actual traffic it was about **two hours** of history on one node and days on the
+other. It is now off by default (`dynblock_ring_entries = 0`), and `make audit`
+asserts that. Turning it back on restores dynamic blocking and restores that
+retention; if you do, correct this table with it.
+
+The cost is that an abusive address is throttled to the per-IP ceiling rather than
+cut off outright. Over DoT, DoH and DoQ there is no amplification to protect
+against, and a DoT client that exceeds the ceiling has its connection closed.
 
 ## What is written to disk
 

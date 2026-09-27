@@ -23,6 +23,7 @@ locals {
     GALENA_RPZ_ZONES               = join(" ", [for z in local.active_blocklists : z.name])
     GALENA_RPZ_UPDATE_INTERVAL     = var.rpz_update_interval
     GALENA_MAX_QPS_PER_IP          = tostring(var.max_qps_per_ip)
+    GALENA_MAX_QPS_BURST_PER_IP    = tostring(var.max_qps_burst_per_ip)
     GALENA_DYNBLOCK_QPS            = tostring(var.dynblock_qps)
     GALENA_DYNBLOCK_WINDOW         = tostring(var.dynblock_window)
     GALENA_DYNBLOCK_DURATION       = tostring(var.dynblock_duration)

@@ -199,11 +199,12 @@ test: ## Test EVERY node from this machine (ARGS="--include-ratelimit" for the r
 	@domain=$$($(TF) output -raw domain); \
 	feeds=$$($(TF) output -json rpz_feed_urls | python3 -c 'import json,sys;[print("--feed",u) for u in json.load(sys.stdin)]' | tr "\n" " "); \
 	nodes=$$($(TF) output -json nodes | python3 -c 'import json,sys;[print(k+","+v["ipv4"]) for k,v in json.load(sys.stdin).items()]'); \
+	rate=$$($(TF) output -raw node_env | python3 -c 'import sys,re;e=dict(re.findall(r"^(\w+)=\"(.*)\"$$",sys.stdin.read(),re.M));print(e["GALENA_MAX_QPS_PER_IP"]+"/"+e["GALENA_MAX_QPS_BURST_PER_IP"])'); \
 	rc=0; \
 	for entry in $$nodes; do \
 		name=$${entry%%,*}; ip=$${entry#*,}; \
 		echo; echo "==> $$name ($$ip)"; \
-		scripts/test-resolver.sh --domain "$$domain" --ip "$$ip" $$feeds $(ARGS) || rc=1; \
+		scripts/test-resolver.sh --domain "$$domain" --ip "$$ip" --rate "$$rate" $$feeds $(ARGS) || rc=1; \
 	done; \
 	[ $$rc -eq 0 ] || { echo; echo "At least one node FAILED."; exit 1; }
 

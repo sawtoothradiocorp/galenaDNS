@@ -476,10 +476,26 @@ variable "enable_threat_ip_blocking" {
 # Abuse controls
 # ---------------------------------------------------------------------------
 
+# Sizing assumption, decided 2026-09-27: one client address is a household or
+# small office of up to 50 devices behind NAT. Not a university, not a CGNAT
+# range — those need a different number and a different conversation.
+#
+# MaxQPSIPRule is a token bucket per address (per /64 for IPv6, which is one LAN):
+# it refills at max_qps_per_ip and holds at most max_qps_burst_per_ip. Queries
+# arriving with the bucket empty are dropped. It runs before the packet cache, so
+# cached answers count too.
+#
+# What 50 devices actually do:
+#   * background — phones, laptops, a smart TV retrying blocked telemetry — sums
+#     to a few queries per second at most;
+#   * one page load on a heavy site is 30-100 lookups within a second or two, and
+#     several people loading pages at once is the peak that matters.
+# So the sustained rate is set well above background and the burst covers about
+# five heavy page loads landing together. A full bucket refills in 10 seconds.
 variable "max_qps_per_ip" {
-  description = "Per-client-IP query rate ceiling enforced inline by dnsdist MaxQPSIPRule. Queries above this are dropped. Keep generous: a NATed office or a CGNAT range shares one IP."
+  description = "Sustained queries per second allowed per client address (IPv6: per /64), enforced inline by dnsdist MaxQPSIPRule. 50 is one per device for a 50-device household, several times a busy household's real average. Queries beyond the rate once the burst is spent are dropped."
   type        = number
-  default     = 40
+  default     = 50
 
   validation {
     condition     = var.max_qps_per_ip >= 5 && var.max_qps_per_ip <= 10000
@@ -487,38 +503,60 @@ variable "max_qps_per_ip" {
   }
 }
 
-variable "dynblock_qps" {
-  description = "Sustained QPS over dynblock_window that triggers a dynamic block."
+variable "max_qps_burst_per_ip" {
+  description = "Size of each client address's token bucket: how many queries it can send at once before the sustained rate applies. 500 covers several simultaneous heavy page loads from a 50-device household. Before 2026-09-27 this was unset, so dnsdist defaulted it to max_qps_per_ip and a household got no burst headroom at all."
   type        = number
-  default     = 100
+  default     = 500
+
+  validation {
+    condition     = var.max_qps_burst_per_ip >= var.max_qps_per_ip
+    error_message = "max_qps_burst_per_ip must be at least max_qps_per_ip — the bucket has to hold one second of the sustained rate."
+  }
+}
+
+# The three dynblock_* settings below only take effect when dynblock_ring_entries
+# is above 0, which it is not by default.
+
+variable "dynblock_qps" {
+  description = "Sustained queries per second over dynblock_window that cut an address off for dynblock_duration. Only with dynblock_ring_entries > 0. 250 sits five times above max_qps_per_ip, so a 50-device household cannot reach it even with a device stuck in a retry loop — a dynamic block cuts the whole household off, where MaxQPSIPRule only throttles it."
+  type        = number
+  default     = 250
 }
 
 variable "dynblock_window" {
-  description = "Seconds of traffic dnsdist evaluates for dynamic blocks. Also the depth of the in-RAM ring window described in PRIVACY.md."
+  description = "Seconds of traffic dnsdist evaluates for dynamic blocks. Only with dynblock_ring_entries > 0."
   type        = number
   default     = 10
 }
 
 variable "dynblock_duration" {
-  description = "Seconds a dynamic block lasts."
+  description = "Seconds a dynamic block lasts. Only with dynblock_ring_entries > 0."
   type        = number
   default     = 60
 }
 
 variable "dynblock_ring_entries" {
   description = <<-EOT
-    Capacity of dnsdist's in-RAM query ring, in queries. This is the single
-    number that sets how much client data exists anywhere in the system, so it is
-    a variable rather than a constant.
+    Capacity of dnsdist's in-RAM query ring — the only place a client address
+    and a query name are ever recorded together. 0, the default, means no ring,
+    no dynamic blocks, and no such pairing anywhere on the node.
 
-    It must span dynblock_window seconds of TOTAL traffic across all clients, not
-    just the abusive one: if the ring is shorter than the window, dynamic blocks
-    silently under-count and stop firing. 5000 entries covers ~500 qps over a
-    10s window. Set to 0 to disable the rings entirely, which also disables
-    dynamic blocks and leaves only MaxQPSIPRule.
+    Off since 2026-09-27, for two measured reasons. The ring holds a COUNT of
+    entries, not a span of time: at this resolver's real traffic, 5000 entries
+    was about 2 hours of client-and-name history on fsn1-a and days on hel1-a,
+    where PRIVACY.md had promised seconds. And of the two rules it fed, the
+    NXDOMAIN-flood one never worked — dnsdist evaluates rcode rules on the
+    RESPONSE ring, and responses are deliberately not recorded. That left one
+    rule, the sustained-rate cut-off, which MaxQPSIPRule's throttle already
+    covers for encrypted transports that cannot be used for amplification.
+
+    To turn dynamic blocks back on: set this so it spans dynblock_window seconds
+    of TOTAL traffic across all clients (at 500 qps, 5000 covers 10 s) — shorter
+    and the rules silently under-count and never fire — and accept that at low
+    traffic it retains far longer than the window. Update PRIVACY.md with it.
   EOT
   type        = number
-  default     = 5000
+  default     = 0
 
   validation {
     condition     = var.dynblock_ring_entries == 0 || var.dynblock_ring_entries >= 100
@@ -589,8 +627,9 @@ variable "dnsdist_packet_cache_entries" {
 variable "enable_localhost_metrics" {
   description = <<-EOT
     Bind dnsdist's webserver to 127.0.0.1 for aggregate metrics. Off by default:
-    the built-in HTML console can surface topQueries from the in-RAM ring, so this
-    is a privacy-relevant surface even bound to loopback. Reachable only over an
+    the built-in HTML console can surface topQueries from the in-RAM ring — empty
+    while dynblock_ring_entries = 0, but the surface returns if the ring does — so
+    this is a privacy-relevant setting even bound to loopback. Reachable only over an
     SSH tunnel when enabled.
   EOT
   type        = bool
