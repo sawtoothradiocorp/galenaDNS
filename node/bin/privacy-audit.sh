@@ -404,8 +404,17 @@ if [[ -r $dconf ]]; then
   # narrower claim above and this reported separately.
   pcache=$(grep -oE '^local packetCacheEntries = [0-9]+' "$dconf" | grep -oE '[0-9]+$' || echo 0)
   if [[ ${pcache:-0} -gt 0 ]]; then
-    hits=$(dnsdist -c -e 'local c = getPool(""):getCache() if c then print(c:getStats()["hits"].." "..c:getEntriesCount()) end' 2>/dev/null | tr -d '\r' | tail -1)
-    pass "packet cache is question-keyed, RAM only" "max ${pcache} entries${hits:+, hits/current: ${hits}}"
+    # print() is not relayed over `dnsdist -c -e`, so stats have to come from the
+    # commands that write to the console themselves. showPools prints "used/max"
+    # for the pool's cache; dumpStats carries the counters.
+    used=$(dnsdist -c -e 'showPools()' 2>/dev/null | grep -oE '[0-9]+/[0-9]+' | head -1)
+    dstats=$(dnsdist -c -e 'dumpStats()' 2>/dev/null | tr -s ' \t' '\n')
+    hits=$(awk '/^cache-hits$/{getline; print; exit}' <<< "$dstats")
+    miss=$(awk '/^cache-misses$/{getline; print; exit}' <<< "$dstats")
+    detail="max ${pcache} entries"
+    [[ $used =~ ^[0-9]+/[0-9]+$ ]] && detail="${detail}, in use ${used}"
+    [[ $hits =~ ^[0-9]+$ && $miss =~ ^[0-9]+$ ]] && detail="${detail}, hits/misses ${hits}/${miss}"
+    pass "packet cache is question-keyed, RAM only" "$detail"
     note "it can say what was asked recently, never by whom; it never touches disk"
   else
     pass "packet cache is question-keyed, RAM only" "disabled"
@@ -575,6 +584,20 @@ u_rss=$(ps -o rss= -C unbound 2>/dev/null | awk '{s+=$1} END{print s+0}')
 d_rss=$(ps -o rss= -C dnsdist 2>/dev/null | awk '{s+=$1} END{print s+0}')
 printf '       unbound %s MB | dnsdist %s MB | available %s MB of %s MB\n' \
   "$((u_rss / 1024))" "$((d_rss / 1024))" "$((mem_avail / 1024))" "$((mem_total / 1024))"
+
+# Read this number knowing what inflates it. An auth_zone_reload holds the old
+# and new zone at once, and glibc keeps the freed arena rather than returning it
+# to the OS — so unbound's RSS right after a blocklist refresh reflects the
+# reload peak, not what it actually needs. Measured on this node with the same
+# four zones: 1366 MB immediately after a reload, 557 MB after a clean restart.
+# It matters because systemd's MemoryMax acts on RSS, so the cap has to cover the
+# peak; it also means a scary-looking figure just after `make deploy` is usually
+# nothing. Restart unbound and re-run this to see the steady state.
+if ((u_rss > 1048576)); then
+  note "RSS above 1 GB is usually reload residue, not steady state — glibc keeps the"
+  note "freed arena after auth_zone_reload. 'systemctl restart unbound' to compare."
+fi
+
 if ((mem_avail < 262144)); then
   warn "sufficient free memory" "under 256 MB available — lower the unbound cache sizes"
 else

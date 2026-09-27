@@ -553,21 +553,31 @@ across a reboot there is no forensic trail. Use `journalctl -f` while reproducin
 
 ## Memory
 
-This used to be the binding constraint. ~2.26M RPZ entries across three zones was
-roughly 0.9-1.2 GB resident, which forced the unbound caches down to `128m`/`256m`
-— blocklists were crowding out the thing that makes a resolver fast.
+This used to be the binding constraint, and the numbers here are measured on the
+running node rather than estimated.
 
-Moving domain-reputation malware blocking upstream removed 1,747,000 of those
-entries. RPZ is now around 250 MB, and the caches doubled to `256m`/`512m`.
+**Steady state: 557 MB** for unbound with all four zones loaded (~895,000 RPZ
+entries across allowlist, adblock, threat and threatip), caches cold. That works
+out at ~0.62 KB per entry, and it scales linearly — 491,000 entries measured
+320 MB earlier. dnsdist adds about 64 MB plus its packet cache.
 
-That bump is deliberately conservative: there is likely room for `512m`/`1024m` on
-a 4 GB node, but free RAM is not wasted RAM, `unbound_memory_max` is a cap rather
-than a target, and nothing here has been measured under real load yet. Check
-`make audit` section 11 for actual RSS before raising it, and raise
-`unbound_memory_max` in the same change if you do.
+**After a blocklist reload the same process reads 1366 MB**, and that is the number
+to be careful with. `auth_zone_reload` holds the old and new zone simultaneously,
+and glibc keeps the freed arena instead of returning it to the OS, so RSS reflects
+the reload peak rather than what unbound needs. A restart drops it straight back to
+557 MB.
 
-`unbound.service` keeps its `MemoryMax` so a runaway zone restarts unbound instead
-of letting the OOM killer pick sshd.
+Two things follow. `unbound_memory_max` has to cover the *peak*, not the steady
+state, because systemd's `MemoryMax` acts on RSS — 2500M against a ~1.4 GB peak is
+the right kind of margin and should not be "optimised" down to fit 557 MB. And a
+large figure in `make audit` section 11 right after `make deploy` is usually
+nothing; the audit now says so rather than leaving you to work it out.
+
+The original 1,747,000-entry medium threat feed is what forced the caches down to
+`128m`/`256m`. With it upstream and `tif.mini` in its place the caches are
+`256m`/`512m`. There is room for `512m`/`1024m` — steady 557 MB plus 1.5 GB of
+cache still clears the cap — but free RAM is not wasted RAM and the dnsdist packet
+cache now absorbs the repeats that unbound's message cache used to.
 
 ## Layout
 
