@@ -121,14 +121,14 @@ Not code. All of it blocks "lightly advertised", none of it blocks personal use.
 - **Stable addresses — done, one step short of advertisable.** The four existing
   Primary IPs were imported into `terraform/primary_ips.tf` with `auto_delete =
   false` on 2026-09-27: same addresses, no downtime, no added cost. Read commit
-  `278d84c` before touching the servers' `public_net` — the obvious version of this
+  `99d7f49` before touching the servers' `public_net` — the obvious version of this
   change deletes both nodes' addresses, the plan does not show it, and the
   `ignore_changes` that prevents it is load-bearing.
 
-  Two things remain. `delete_protection` is off, because the operator is the only
-  IP-configured client; turn it on before publishing IP-based setup, so a destroy or
-  node removal cannot release an address other people typed in. And survival across
-  a replacement is established from the provider source, not observed:
+  `delete_protection` is on (`primary_ip_delete_protection`, 2026-09-27), since the
+  addresses are now published: a destroy or node removal cannot release an address
+  other people typed in. What remains: survival across a replacement is established
+  from the provider source, not observed:
   `terraform apply -replace='hcloud_server.node["hel1-a"]'` then `make deploy` would
   prove it, at the cost of one node down for ~10 minutes behind failover.
 - **Per-address rate limit — decided for households, 2026-09-27.** One address is

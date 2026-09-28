@@ -20,7 +20,14 @@
 # outputs.tf IS this Primary IP, and IPv6 Primary IPs are not billed at all. An
 # UNASSIGNED IPv4 keeps billing at $0.60/month, which is the price of keeping an
 # address alive while no server holds it — minutes, during a node replacement.
-# `make destroy` and removing a node from var.nodes both delete the addresses.
+#
+# delete_protection is ON (var.primary_ip_delete_protection): the addresses are
+# published — README, docs/ABUSE.md — and people configure devices with them, so
+# neither `make destroy` nor removing a node may release one by accident. Both
+# now stop with an error at these resources, leaving the addresses allocated and
+# billing $0.60/month each. Releasing them is a deliberate step: set the variable
+# to false, `make apply`, then destroy — which is what the sunset in
+# docs/TERMS.md does, and only on its shutdown date.
 
 resource "hcloud_primary_ip" "ipv4" {
   for_each = var.nodes
@@ -33,12 +40,10 @@ resource "hcloud_primary_ip" "ipv4" {
   # for the same reason: a server deletion would take the address with it.
   auto_delete = false
 
-  # No delete_protection, deliberately: the only IP-configured clients are the
-  # operator's own, so `make destroy` should release these cleanly rather than
-  # leave them billing unassigned. Revisit before publishing IP-based setup to
-  # anyone else — then an address outliving a destroy is the point. The
+  # Turned on 2026-09-27, when the addresses were published. Separately, the
   # destructive provider update this file was nearly bitten by is prevented by
   # ignore_changes on the servers' public_net, not by protection.
+  delete_protection = var.primary_ip_delete_protection
 
   labels = merge(local.common_labels, { node = each.key })
 }
@@ -46,10 +51,11 @@ resource "hcloud_primary_ip" "ipv4" {
 resource "hcloud_primary_ip" "ipv6" {
   for_each = var.nodes
 
-  name        = "${var.project_name}-${each.key}-v6"
-  type        = "ipv6"
-  location    = each.value.location
-  auto_delete = false
+  name              = "${var.project_name}-${each.key}-v6"
+  type              = "ipv6"
+  location          = each.value.location
+  auto_delete       = false
+  delete_protection = var.primary_ip_delete_protection
 
   labels = merge(local.common_labels, { node = each.key })
 }

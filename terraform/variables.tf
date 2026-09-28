@@ -239,6 +239,12 @@ variable "nodes" {
   }
 }
 
+variable "primary_ip_delete_protection" {
+  description = "Protect the nodes' public addresses from deletion. On because they are published and configured into people's devices: with it, `make destroy` or removing a node stops at the addresses instead of releasing them. Set false and `make apply` only to release them on purpose — the shutdown date in docs/TERMS.md."
+  type        = bool
+  default     = true
+}
+
 variable "image" {
   description = "Hetzner image slug. Debian 13 ships unbound 1.22.0 and certbot 4.0.0; PowerDNS publishes dnsdist 2.1 for it."
   type        = string

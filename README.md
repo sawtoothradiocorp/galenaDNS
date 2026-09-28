@@ -442,10 +442,13 @@ fails over between them rather than only using the first, varies by firmware.
 
 **These addresses survive a node being replaced.** They are Hetzner Primary IPs
 managed in `terraform/primary_ips.tf` with `auto_delete = false`, so a rebuilt server
-comes back on the same ones. They do *not* survive moving a node to another location
-(an address is routed to its site), removing a node from `nodes`, or `make destroy` —
-all three release them, deliberately, since no one but the operator has them typed
-in. Add `delete_protection` there before publishing IP-based setup to anyone else.
+comes back on the same ones. They are also **delete-protected**
+(`primary_ip_delete_protection`), because they are published here and in
+docs/ABUSE.md: `make destroy` or removing a node from `nodes` stops with an error at
+the addresses rather than releasing them, and they stay allocated at $0.60/month
+each. Releasing them is deliberate — set the variable to false and `make apply`
+first. The one thing that changes them regardless is moving a node to another
+location, since an address is routed to its site.
 
 ## Blocking
 
@@ -987,5 +990,12 @@ groups, abuse handling, and the legal and data-controller questions.
 
 ## License
 
-Configuration in this repository is yours to use. Blocklists are Hagezi's, under
-[their license](https://github.com/hagezi/dns-blocklists/blob/main/LICENSE).
+The code and documentation in this repository are released under the
+[MIT License](LICENSE), copyright Sawtooth Radio Corp LLC. Use, change and redeploy
+them freely.
+
+That covers this repository only. The blocklists the nodes download are Hagezi's,
+under [their licence](https://github.com/hagezi/dns-blocklists/blob/main/LICENSE),
+and running your own copy means your own operator obligations — the terms, privacy
+policy and abuse contacts in `docs/` describe the service at `base.dns.swthrc.com`,
+not a deployment of this code by anyone else.

@@ -87,8 +87,11 @@ apply: ## Create/update infrastructure (PROMPTS — this costs money)
 destroy: ## Destroy all infrastructure (PROMPTS TWICE — irreversible)
 	@$(TF) plan -destroy -input=false
 	@echo
-	@echo "This permanently destroys the resolver node(s) and their IP addresses."
+	@echo "This permanently destroys the resolver node(s)."
 	@echo "Clients configured with your hostname will stop resolving."
+	@echo "The public addresses are delete-protected: this stops with an error at them"
+	@echo "and they stay allocated (\$$0.60/month each). To release them too, set"
+	@echo "primary_ip_delete_protection = false and make apply first."
 	@[ -t 0 ] || { \
 	  echo "Not attached to a terminal, so there is nothing to confirm on."; \
 	  echo "Run this target from an interactive shell — the prompt is the whole point."; \

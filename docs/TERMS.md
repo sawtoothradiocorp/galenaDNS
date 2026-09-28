@@ -109,7 +109,8 @@ On the shutdown date:
   certificate for it and quietly receive their traffic. That is the risk with any
   resolver that simply lets its domain lapse, and this commitment is the answer
   to it.
-- **The IP addresses go back to Hetzner** and may later belong to someone else.
+- **The IP addresses go back to Hetzner** — their delete protection is lifted for
+  this, and only on this date — and may later belong to someone else.
   Clients that verify the resolver's certificate — every setup this service
   documents — will refuse to talk to whoever gets them, because only the operator
   can obtain a certificate for the name.
