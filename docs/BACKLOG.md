@@ -220,9 +220,13 @@ Not code. All of it blocks "lightly advertised", none of it blocks personal use.
 - **No-SLA and sunset — written, 2026-09-27: [TERMS.md](TERMS.md).** No service
   level, provided as is, acceptable use, and at least 90 days' notice before a
   permanent shutdown, with the service unchanged throughout. Its central
-  commitment is about the hostname: after shutdown `base.dns.swthrc.com` stays
-  registered to the operator and points at nothing, so configured devices fail
-  closed instead of one day sending their DNS to whoever registers a lapsed name.
+  commitment is about the hostname: after shutdown `base.dns.swthrc.com` points at
+  nothing for at least 90 days, and never afterwards at a DNS service run by anyone
+  else, nor is it transferred while the operator holds `swthrc.com` — so a device
+  nobody reconfigured fails closed instead of sending its DNS to a stranger.
+  Narrowed 2026-09-28 from "kept and pointed at nothing" indefinitely: the operator
+  may reuse the name for its own purposes after 90 days, which is safe, since only
+  someone else's resolver on the name is dangerous.
 - **Before any of the docs above are published** — each is a promise the docs
   already make, so it has to be true first:
   - ~~Create `dataprotection@swthrc.com`~~ — done 2026-09-27. Deliberately not
@@ -236,9 +240,54 @@ Not code. All of it blocks "lightly advertised", none of it blocks personal use.
   - ~~`swthrc.com` from lapsing~~ — auto-renew on (expiry 2027-08-01) and the
     transfer lock enabled 2026-09-27 (`clientTransferProhibited`);
     `sawtoothradiocorp.com` already had both.
-  - **Legal review of TERMS.md** — being scheduled. The warranty and liability
-    wording, whether to name a governing law and venue (deliberately absent), the
-    GDPR items above, and the blocking-order question below.
+  - **Legal review** — deferred until growth warrants it (operator's call,
+    2026-09-28); see "Legal exposure grows with users" below for the trigger and
+    the questions to bring. TERMS.md and PRIVACY.md are live without it, so their
+    warranty, liability and jurisdiction wording stands unreviewed until then.
+- **Legal exposure grows with users — the trigger for a lawyer.** Exposure
+  scales with how many people use the service and where they are, so the review
+  is tied to growth rather than a date. The resolver cannot count users — by
+  design it keeps nothing that would let it — but dnsdist's aggregate `queries`
+  counter gives a rate. One measured anchor: fsn1-a, carrying roughly one
+  household plus the prober, averaged **0.73 q/s** over its first 13.6 hours.
+  Treating that as ~0.7 q/s per household — a thin sample, so read every figure
+  below as an order of magnitude:
+
+  | Scale (households) | Sustained, both nodes | Expected legal exposure |
+  |---|---|---|
+  | up to a few hundred | up to ~200 q/s | occasional abuse complaints via Hetzner; rare GDPR requests; blocking orders and law-enforcement requests effectively nil |
+  | ~1,000–10,000 | ~700–7,000 q/s | regular abuse complaints; first GDPR requests; appearing on public resolver lists, where rightsholders notice a resolver popular in France or Belgium; law-enforcement requests still unlikely |
+  | ~10,000–100,000 | ~7,000–70,000 q/s | blocking orders plausible with a real French/Belgian/Italian share; occasional preservation or data requests; a lawyer on call |
+  | 100,000+ | 70,000 q/s+ | a notable public resolver — all of the above, and two small nodes are not enough |
+
+  **Triggers.** Sustained ~700 q/s across both nodes (~1,000 households): schedule
+  the review, and build the `legal` zone if it does not exist yet. ~7,000 q/s
+  (~10,000 households): have counsel reachable, and talk to Quad9 — that is also
+  roughly where every query arriving from two addresses starts to look to Quad9
+  like one very heavy source, so the legal and the technical pressure arrive
+  together. Measuring it is two readings of the counter a minute apart per node,
+  as was done on 2026-09-27; turning that into a CloudWatch metric the prober
+  publishes would make the trigger watch itself.
+
+  **Questions to bring:**
+  - Is a public DNS resolver an "electronic communication service" under US law
+    (the Stored Communications Act, the CLOUD Act) — and so what process can reach
+    it, and what can it be compelled to produce?
+  - Exposure to pen-register and trap-and-trace orders, which can compel a
+    provider to *start* collecting addressing information, possibly gagged. Is
+    DNS query data "addressing information" for that purpose?
+  - A US demand for EU users' data against GDPR Article 48, which restricts
+    transfers to foreign authorities without a treaty basis: how would that
+    conflict play out, and what should the response procedure be?
+  - A warrant canary: worth publishing, given it is legally untested in the US?
+  - TERMS.md: the warranty and liability wording, and whether to name a
+    governing law and venue (deliberately absent).
+  - GDPR: the lawful basis relied on, and whether an Article 27 EU representative
+    is required for a US controller serving people in the EU.
+  - Blocking orders: how to respond to one from France or Belgium, and whether to
+    publish what the `legal` zone blocks.
+  - Whether, at scale, a separate non-US entity should operate the service — the
+    only structure that takes the operator itself out of direct US reach.
 
 ---
 

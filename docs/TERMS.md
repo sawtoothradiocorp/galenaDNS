@@ -102,13 +102,20 @@ On the shutdown date:
 
 - **The servers are destroyed**, and with them their keys. There is no data to hand
   over or delete, because none is kept.
-- **The hostname is kept, and pointed at nothing.** `base.dns.swthrc.com` stays
-  registered to the operator and is never reassigned to another service or
-  resolver. Devices still configured with it will fail — they cannot resolve — but
-  they fail *closed*: nobody else can later take over the name, obtain a
-  certificate for it and quietly receive their traffic. That is the risk with any
-  resolver that simply lets its domain lapse, and this commitment is the answer
-  to it.
+- **The hostname points at nothing for 90 days.** For at least 90 days after the
+  shutdown date, `base.dns.swthrc.com` answers nothing. Devices still configured
+  with it will fail — they cannot resolve — and that failure is the signal to
+  change the setting.
+- **It never becomes someone else's resolver.** After those 90 days the operator
+  may reuse the name for its own purposes, but will never point it at a DNS
+  service run by anyone else, and will not transfer it while the operator holds
+  `swthrc.com`. That is the part that protects a device nobody got around to
+  changing: reused for anything of the operator's own, it simply keeps failing,
+  *closed*; the danger in a resolver's shutdown is its name coming to answer DNS
+  for a stranger, who could then obtain a certificate for it and quietly receive
+  that device's traffic. This commitment rules that out. What it cannot cover is
+  `swthrc.com` itself lapsing — which is why the operator keeps it on automatic
+  renewal with a transfer lock.
 - **The IP addresses go back to Hetzner** — their delete protection is lifted for
   this, and only on this date — and may later belong to someone else.
   Clients that verify the resolver's certificate — every setup this service
@@ -118,5 +125,5 @@ On the shutdown date:
 **The one exception is an end the operator does not control**: a court order, the
 hosting provider ending the service, a security emergency that makes continuing
 unsafe, or the operator ceasing to exist. Then the notice will be as long as the
-circumstances allow, and the hostname commitment still stands for as long as the
-operator exists to keep it.
+circumstances allow, and the hostname commitments still stand for as long as the
+operator exists to keep them.
