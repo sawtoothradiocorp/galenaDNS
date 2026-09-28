@@ -3,6 +3,9 @@
 `base.dns.swthrc.com` is a public, encrypted DNS resolver operated by
 **Sawtooth Radio Corp LLC**, a Colorado limited liability company.
 
+The service page, with setup and any notices, is
+[sawtoothradiocorp.com/galena-dns](https://sawtoothradiocorp.com/galena-dns).
+
 **Report abuse to [abuse@swthrc.com](mailto:abuse@swthrc.com).** Privacy
 requests go to [dataprotection@swthrc.com](mailto:dataprotection@swthrc.com)
 instead; what counts as acceptable use is in [TERMS.md](TERMS.md).

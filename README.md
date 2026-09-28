@@ -13,6 +13,12 @@ docs/PRIVACY.md, where it is the first thing disclosed.
 
 See [docs/PRIVACY.md](docs/PRIVACY.md) for exactly what is and is not retained.
 
+**Just want to use it?** Setup for every platform, ready-made Apple profiles, and
+any service notices: **[sawtoothradiocorp.com/galena-dns](https://sawtoothradiocorp.com/galena-dns)**.
+This repository is how it is built and run. It lives on
+[GitLab](https://gitlab.com/sawtooth-radio-corp/galenaDNS), where issues and changes
+go, and is mirrored to [GitHub](https://github.com/sawtoothradiocorp/galenaDNS).
+
 Operated by **Sawtooth Radio Corp LLC**, as a free, best-effort service with no
 uptime guarantee and 90 days' notice before any shutdown —
 [docs/TERMS.md](docs/TERMS.md). Abuse reports go to
@@ -390,8 +396,10 @@ Clients split into two kinds, and only the first gets failover from DNS:
 **Android 9+** — Settings ▸ Network & internet ▸ Private DNS ▸ Private DNS provider
 hostname ▸ `base.dns.swthrc.com`. This is DoT.
 
-**iOS / macOS** — `make mobileconfig` generates two unsigned profiles, DoH and
-DoT. AirDrop or email one to the device and install it:
+**iOS / macOS** — download a ready-made profile, DoH or DoT, from
+[sawtoothradiocorp.com/galena-dns](https://sawtoothradiocorp.com/galena-dns) on the
+device itself, or for your own deployment generate them with `make mobileconfig`
+and AirDrop or email one over. Then install it:
 
 - iOS: Settings ▸ General ▸ VPN, DNS & Device Management
 - macOS: System Settings ▸ General ▸ Device Management

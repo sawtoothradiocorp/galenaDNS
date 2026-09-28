@@ -170,6 +170,30 @@ Not code. All of it blocks "lightly advertised", none of it blocks personal use.
   engineering: the **lawful basis** relied on; whether a US-based controller
   serving people in the EU needs an **Article 27 representative** there. Privacy
   requests now go to their own address, dataprotection@ — see below.
+- **Sign the Apple configuration profiles — improves trust, does not block.**
+  Unsigned, they install with a red "Unverified"; signed, with a green "Verified"
+  and the signer's name. For a stranger, "Unverified" on something that redirects
+  all their DNS is exactly what they have been warned about, so this removes the
+  biggest hesitation in the Apple setup — though it adds little security: the
+  profiles are already served over HTTPS, and the DNS connection is
+  certificate-verified on every query regardless.
+  - **Never sign with the resolver's TLS certificate.** Its key protects every
+    DoT/DoH session; copying it off the nodes for a cosmetic gain is a bad trade.
+  - **Plan: a one-year certificate, re-signed yearly by hand.** A free Actalis
+    S/MIME certificate for e.g. `dataprotection@swthrc.com`, or a paid
+    code-signing one. Untested: whether iOS shows such a signature as "Verified" —
+    try it on an iPhone and a Mac before changing the page or README, which still
+    explain "Unverified". If it verifies: a `make sign-profiles` target (`openssl
+    smime -sign ... -nodetach -outform der`) writing into klix-hq's `public/`, the
+    key kept on the operator's machine like the other credentials, and a calendar
+    reminder a month before expiry.
+  - **Fallback: a separate Let's Encrypt certificate** for a signing name such as
+    `profiles.swthrc.com` (DNS-01, its own TXT-only Route 53 key). Free and
+    publicly trusted — widely reported to verify, not tested here — but 90 days or
+    less, so re-signing must be automated.
+  - **To confirm on a device:** that iOS checks the signature only at install time,
+    so a lapsed certificate makes NEW installs "Not Verified" while installed
+    profiles keep working.
 - **Legal exposure — liability settled, blocking orders live.**
   - *Liability, Germany: resolved in the resolver's favour.* Sony won injunctions
     against Quad9 in Hamburg and Leipzig, holding a resolver liable for what it
@@ -207,7 +231,8 @@ Not code. All of it blocks "lightly advertised", none of it blocks personal use.
     <https://sawtoothradiocorp.com/galena-dns> (the klix-hq repo), with the
     service-notice box TERMS.md points to, setup, contacts, and links to these
     documents; the Apple profiles are served alongside with the content type iOS
-    needs to offer installation. The homepage links to it.
+    needs to offer installation. The homepage links to it. Checked on a phone by
+    the operator, 2026-09-27.
   - ~~`swthrc.com` from lapsing~~ — auto-renew on (expiry 2027-08-01) and the
     transfer lock enabled 2026-09-27 (`clientTransferProhibited`);
     `sawtoothradiocorp.com` already had both.
