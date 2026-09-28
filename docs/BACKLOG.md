@@ -299,6 +299,18 @@ Not code. All of it blocks "lightly advertised", none of it blocks personal use.
   the old 40/no-burst config, from a non-exempt address, a 300-query household
   burst got 40 answers and a closed connection. `rate_limit_exempt_cidrs` still
   defaults to `admin_cidr`, so run it from anywhere else.
+- **Active DoT connections are closed after ~11 seconds — unexplained.** Found
+  2026-09-28 while verifying the connection-cap fix. One DoT connection to hel1-a,
+  sending `example.com` repeatedly: at a 0.2 s gap dnsdist closed it after 20
+  answers and 11.0 s; at 1 s, after 8 answers and 10.9 s; at 3 s, after 1 answer
+  and 4.1 s. The last is the documented `setTCPRecvTimeout` default of 2 s and is
+  normal — clients reconnect when they next need to. The first two are not: the
+  connection was busy, `setMaxTCPConnectionDuration` is 600, and nothing in the
+  config or the docs gives ~10 s. Same from mtbaldy, so it is server-side; same
+  with 1 connection or 40, so it is not the per-client cap. Cost if real: a busy
+  client reconnects every ~10 s, with TLS session resumption softening each
+  reconnect. To do: reproduce against a stock dnsdist with only `addTLSLocal`,
+  then read dnsdist's incoming-TCP handling, before changing anything.
 - **Failover is verified in the mechanism, not in the client.** Both directions were
   observed for real during the deploy that introduced it: `hel1-a` existed before it
   was deployed, so its checks read 0/16 healthy and Route 53 dropped its address from
