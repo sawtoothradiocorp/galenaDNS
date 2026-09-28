@@ -259,8 +259,8 @@ Not code. All of it blocks "lightly advertised", none of it blocks personal use.
 - **Reboot policy.** `unattended-upgrades` patches packages; kernel updates need a
   reboot that nothing currently performs or schedules.
 - **Publishing the repo — done, 2026-09-27.** Public at
-  <https://gitlab.com/sawtooth-radio-corp/galena-dns>, push-mirrored by GitLab to
-  <https://github.com/sawtoothradiocorp/galena-dns> through a write deploy key (no
+  <https://gitlab.com/sawtooth-radio-corp/galenaDNS>, push-mirrored by GitLab to
+  <https://github.com/sawtoothradiocorp/galenaDNS> through a write deploy key (no
   expiry, scoped to that one repo). MIT licensed. Before the first push the history
   was rewritten — the only safe moment to do it — to remove a home address and the
   admin host's address from commit messages and old file versions, and a laptop

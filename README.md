@@ -1,4 +1,4 @@
-# galena-dns
+# galenaDNS
 
 A public, non-logging, ad/tracker/malware-blocking encrypted DNS resolver on
 Hetzner Cloud. Terraform for the infrastructure, dnsdist for the encrypted front
