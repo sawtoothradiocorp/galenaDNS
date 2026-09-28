@@ -13,9 +13,12 @@ docs/PRIVACY.md, where it is the first thing disclosed.
 
 See [docs/PRIVACY.md](docs/PRIVACY.md) for exactly what is and is not retained.
 
-Operated by **Sawtooth Radio Corp LLC**. Abuse reports and privacy requests go to
-[abuse@swthrc.com](mailto:abuse@swthrc.com); [docs/ABUSE.md](docs/ABUSE.md) says
-what a report can and cannot get.
+Operated by **Sawtooth Radio Corp LLC**, as a free, best-effort service with no
+uptime guarantee and 90 days' notice before any shutdown —
+[docs/TERMS.md](docs/TERMS.md). Abuse reports go to
+[abuse@swthrc.com](mailto:abuse@swthrc.com) ([docs/ABUSE.md](docs/ABUSE.md) says
+what a report can and cannot get); privacy requests to
+[dataprotection@swthrc.com](mailto:dataprotection@swthrc.com).
 
 ---
 
@@ -872,8 +875,9 @@ node/               rsynced to /opt/galena, installed by bootstrap.sh
   nftables/         host firewall
   systemd/          journald privacy, RPZ timer, service hardening, certbot AWS env
   bin/              rpz-update.sh, acme-deploy-hook.sh, privacy-audit.sh
-docs/               PRIVACY.md (what is kept), ABUSE.md (reports, and the
-                    operator's procedure), BACKLOG.md (open work)
+docs/               PRIVACY.md (what is kept), TERMS.md (no SLA, acceptable
+                    use, 90-day sunset), ABUSE.md (reports, and the operator's
+                    procedure), BACKLOG.md (open work)
 scripts/            run from your machine: test-resolver.sh, make-mobileconfig.sh
 monitor/            the external prober, its systemd units and installer, for
                     the monitor host — never a node

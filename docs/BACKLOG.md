@@ -164,15 +164,34 @@ Not code. All of it blocks "lightly advertised", none of it blocks personal use.
   connection, and the per-address rate counters hold them for 5-15 minutes after an
   address's last query. Still open, and a matter for legal review rather than
   engineering: the **lawful basis** relied on; whether a US-based controller
-  serving people in the EU needs an **Article 27 representative** there; and a
-  dedicated privacy address, since abuse@ currently takes both.
+  serving people in the EU needs an **Article 27 representative** there. Privacy
+  requests now go to their own address, dataprotection@ — see below.
 - **Legal reading, specific to German hosting.** Sony sued Quad9 in Germany over
   resolving a piracy site and Quad9 lost at first instance — a resolver held liable
   for what it resolves, not for hosting anything. There were appeals; check the
   current status rather than trusting a summary. This is the most underappreciated
   risk of running a public blocking resolver in the EU.
-- **No-SLA statement and a sunset policy.** A resolver that vanishes breaks people
-  who trusted it.
+- **No-SLA and sunset — written, 2026-09-27: [TERMS.md](TERMS.md).** No service
+  level, provided as is, acceptable use, and at least 90 days' notice before a
+  permanent shutdown, with the service unchanged throughout. Its central
+  commitment is about the hostname: after shutdown `base.dns.swthrc.com` stays
+  registered to the operator and points at nothing, so configured devices fail
+  closed instead of one day sending their DNS to whoever registers a lapsed name.
+- **Before any of the docs above are published** — each is a promise the docs
+  already make, so it has to be true first:
+  - **Create `dataprotection@swthrc.com`.** PRIVACY.md sends data requests there.
+    Deliberately not `privacy@`, which receives Privacy.com account mail — a GDPR
+    request has a one-month response deadline and must not be buried in vendor
+    notices.
+  - **Somewhere public to post notices.** TERMS.md promises a 90-day shutdown notice
+    "where the service is described", and there is no such page yet: the nodes
+    serve only `/dns-query`, and this repository is not public.
+  - **Keep `swthrc.com` from lapsing**: auto-renew with a payment method that will
+    not expire unnoticed, and a registrar lock. The hostname commitment is only as
+    good as the renewal.
+  - **Legal review of TERMS.md** — the warranty and liability wording, and whether
+    to name a governing law and venue, which it deliberately does not do yet —
+    alongside the GDPR items above.
 
 ---
 

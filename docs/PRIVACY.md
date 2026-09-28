@@ -10,8 +10,10 @@ document is wrong about that node — trust the audit, not the prose.
 This resolver is operated by **Sawtooth Radio Corp LLC**, a Colorado limited
 liability company, which decides what it processes and why — the data controller,
 in the GDPR's terms. Questions about this document, and requests about data
-concerning you, go to **[abuse@swthrc.com](mailto:abuse@swthrc.com)**; so do abuse
-reports, which [ABUSE.md](ABUSE.md) covers.
+concerning you, go to
+**[dataprotection@swthrc.com](mailto:dataprotection@swthrc.com)**. Abuse reports go
+to abuse@swthrc.com — see [ABUSE.md](ABUSE.md) — and the terms of use are in
+[TERMS.md](TERMS.md).
 
 Three other organisations are involved, and each sees something different:
 
