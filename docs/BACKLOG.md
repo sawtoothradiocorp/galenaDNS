@@ -185,56 +185,78 @@ Not code. All of it blocks "lightly advertised", none of it blocks personal use.
   device actually says before rewriting either.
   - **Never sign with the resolver's TLS certificate.** Its key protects every
     DoT/DoH session; copying it off the nodes for a cosmetic gain is a bad trade.
-  - **Code-signing certificates are out.** Since 2023-06-01 the CA/Browser Forum
-    has required code-signing keys to be generated in, and never leave, FIPS 140-2
-    level 2 hardware
+  - **Plan: an Apple Developer ID Application certificate, $99/year.** Chosen
+    2026-09-28 by taking apart the closest analogue there is. Mullvad publishes
+    encrypted-DNS profiles to strangers exactly as this does, and signs them with
+    `Developer ID Application: Mullvad VPN AB`, issued by Apple's Developer ID
+    Certification Authority G2, EKU **Code Signing (critical)**, valid five years
+    (2023-05 to 2028-05), with that intermediate embedded in the profile itself
+    (<https://github.com/mullvad/encrypted-dns-profiles>). The five years are the
+    point: a signature has to outlive the installs sitting on it. Two things fall
+    out of that certificate. A critical `codeSigning` EKU is plainly accepted by
+    the installer, so the claim that Apple requires `emailProtection` on a profile
+    signer is wrong — no Apple documentation states an EKU requirement either way.
+    And Developer ID is the only code-signing certificate still usable here at all.
+  - **Why the other code-signing certificates are out.** Since 2023-06-01 the
+    CA/Browser Forum has required code-signing keys to be generated in, and never
+    leave, FIPS 140-2 level 2 hardware
     ([DigiCert](https://knowledge.digicert.com/alerts/code-signing-changes-in-2023)),
-    so `openssl smime -sign` with a key file cannot work at all — it would take a
-    USB token, PKCS#11 and $200-400 a year.
-  - **The test that decides the rest, and it is free.** Issue a Let's Encrypt
-    certificate for a signing-only name such as `profiles.swthrc.com` (DNS-01,
-    the TXT-only Route 53 key already in use), sign a copy of the DoT profile,
-    install it on an iPhone and a Mac. That settles in one sitting what iOS 26
-    displays and whether a `serverAuth` certificate is accepted at all — iMazing
-    says TLS certificates work, Apple documents nothing. Sign a second copy with a
-    deliberately expired certificate to see the expired-signer state without
-    waiting 90 days for it.
-  - **The expiry question, which this item had backwards.** It assumed iOS checks
-    the signature only at install time, so a lapsed certificate would affect new
-    installs alone. The only report found says installed profiles get a red
-    "Untrusted" label once the signing certificate expires ([Apple Developer
-    Forums](https://developer.apple.com/forums/thread/75418) — a community answer,
-    not Apple documentation). If that is right, a 90-day certificate turns every
-    existing install red three months later, and the Let's Encrypt option dies
-    with it.
-  - **Option A — Let's Encrypt, free, if expiry behaves.** `Signed by
-    profiles.swthrc.com` ties the profile to the same domain as the resolver
-    hostname, which is the most honest label available here. Costs: 90 days or
-    less, so re-signing and the klix-hq push have to be automated, and the
-    intermediates must be embedded with `-certfile`, since only ISRG Root X1 is
-    preinstalled.
-  - **Option B — Apple Developer Program, $99/year.** The `Developer ID
-    Application` certificate is the one type trusted without any intermediate
-    juggling, and it lasts years, so re-signing is rare; `security cms -S -N
-    "Developer ID Application: ..."` signs without exporting the key from the
-    Keychain. Two caveats: organization enrollment needs a D-U-N-S number for
-    Sawtooth Radio Corp LLC, and individual enrollment instead puts the operator's
-    personal name on every install sheet — the opposite of what `9f46fa8` did to
-    this repo. At $99 a year it also costs more than `hel1-a` does ($85).
-  - **Option C — free Actalis S/MIME, one year.** Under the current S/MIME
-    baseline requirements a mailbox-validated certificate's subject is the email
-    address alone, so the sheet would read `Signed by dataprotection@swthrc.com`.
-    Whether Apple's installer accepts an `emailProtection`-only EKU is documented
-    nowhere and untested here; iMazing names code-signing and TLS certificates
-    only. Also: actalis.com was unreachable from the operator's network on
-    2026-09-28, and their free flow generates the keypair server-side.
+    so no `openssl smime -sign` can reach one — it would take a USB token, PKCS#11
+    and $200-400 a year. Apple issues Developer ID against an ordinary Keychain
+    keypair, which is the whole reason a local signing step remains possible.
+  - **What enrolling costs beyond the money.** Organization enrollment needs a
+    D-U-N-S number for Sawtooth Radio Corp LLC (free, about five business days when
+    requested for Apple), a work email on the organization's domain, and a public
+    website on it — `sawtoothradiocorp.com` already satisfies the last two.
+    **Enroll as the organization, not as an individual.** An individual enrollment
+    puts the operator's personal legal name in the certificate's CN, and the CN is
+    what the install sheet displays, which would publish on every stranger's phone
+    exactly what commit `9f46fa8` stripped out of this repo. What they would read
+    is `Signed by Developer ID Application: Sawtooth Radio Corp LLC (TEAMID)`.
+    Limits worth knowing: five Developer ID Application certificates per team; if
+    the membership lapses, what is already signed keeps working but nothing new
+    can be signed; notarization is a Mac-app concept and does not apply to profiles.
+  - **The money, stated plainly.** $99/year against $17.18/month deployed is about
+    +48% on the annual running cost — $206 to $305 — for something this item itself
+    calls cosmetic. That is the argument for enrolling when the service is actually
+    advertised and not before, and leaving the profiles unsigned until then.
+  - **Let's Encrypt is out**, rejected 2026-09-28, though it was this item's
+    fallback. Two independent reasons. Ballot SC-081v3 caps public TLS certificates
+    at 200 days from 2026-03-15, 100 days from 2027-03-15 and 47 days from
+    2029-03-15
+    ([DigiCert](https://www.digicert.com/blog/tls-certificate-lifetimes-will-officially-reduce-to-47-days)),
+    so the entire certificate class is being driven toward lifetimes far shorter
+    than the installs it would be signing. And the expiry behaviour below means a
+    90-day certificate would turn every already-installed profile red four times a
+    year, which is worse than shipping them unsigned.
+  - **The expiry question, answered — this item had it backwards.** It assumed iOS
+    checks the signature only at install time, so a lapsed certificate would affect
+    new installs alone. Jamf administrators report the opposite from the field:
+    profiles deployed *before* the signing certificate expired show **Unverified**,
+    newly installed ones are fine, and nothing stops working — it is cosmetic
+    ([Jamf](https://community.jamf.com/t5/jamf-pro/mdm-profile-unverified-signing-certificate-expired/m-p/154587)).
+    Still to confirm on a device: whether that also applies to manually installed
+    profiles, since every report found is from an MDM fleet.
+  - **Free Actalis S/MIME — fallback only.** Under the current S/MIME baseline
+    requirements a mailbox-validated certificate's subject is the email address
+    alone, so the sheet would read `Signed by dataprotection@swthrc.com`. One year
+    of validity, so the red-after-expiry problem returns annually rather than
+    quarterly. Whether the installer accepts an `emailProtection`-only EKU is
+    untested, though Mullvad's critical `codeSigning` EKU suggests it does not
+    filter on EKU at all. Also: actalis.com was unreachable from the operator's
+    network on 2026-09-28, and their free flow generates the keypair server-side.
+  - **Never sign with a self-signed certificate.** It produces a red **Not
+    Verified**, which is worse than the **Not Signed** the profiles carry today.
   - **Mechanics, tested 2026-09-28 against this repo's own DoT profile.** `openssl
     smime -sign -signer cert.pem -inkey key.pem -certfile chain.pem -nodetach
     -outform der` produces a DER profile that macOS's own `security cms -D` parses
-    back to the original plist. A `make sign-profiles` target writing into
+    back to the original plist; `security cms -S -N "Developer ID Application:
+    ..."` signs straight from the Keychain without exporting the key at all. Embed
+    the Developer ID G2 intermediate with `-certfile`, as Mullvad does, rather than
+    relying on the device having it. A `make sign-profiles` target writing into
     klix-hq's `public/` would keep the unsigned plist as the source of truth and
-    publish the DER beside it; every `make mobileconfig` invalidates the
-    signature, so re-signing belongs in the same step.
+    publish the DER beside it; every `make mobileconfig` invalidates the signature,
+    so re-signing belongs in the same step.
 - **Legal exposure — liability settled, blocking orders live.**
   - *Liability, Germany: resolved in the resolver's favour.* Sony won injunctions
     against Quad9 in Hamburg and Leipzig, holding a resolver liable for what it
