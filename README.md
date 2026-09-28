@@ -444,9 +444,68 @@ Domains=~.
 resolved moves to the next server when the current one fails. Addresses as of
 2026-09-27; `make nodes` is authoritative.
 
-**Routers** — the same principle: enter every node's address with DoT and the TLS
-hostname `base.dns.swthrc.com`. How many servers a router accepts, and whether it
-fails over between them rather than only using the first, varies by firmware.
+**unbound** — for your own resolver at home (a Raspberry Pi, OPNsense, pfSense)
+forwarding everything to galenaDNS over DoT:
+
+```
+server:
+    # Where the system CA bundle lives. Debian/Ubuntu shown;
+    # FreeBSD, pfSense and OPNsense: /etc/ssl/cert.pem
+    tls-cert-bundle: /etc/ssl/certs/ca-certificates.crt
+
+forward-zone:
+    name: "."
+    forward-tls-upstream: yes
+    # Never fall back to resolving in cleartext if galenaDNS is unreachable.
+    forward-first: no
+    forward-addr: 2.28.3.17@853#base.dns.swthrc.com
+    forward-addr: 46.62.237.108@853#base.dns.swthrc.com
+    # Only if this host has IPv6:
+    forward-addr: 2a01:4f8:c012:b8df::1@853#base.dns.swthrc.com
+    forward-addr: 2a01:4f9:c014:67fb::1@853#base.dns.swthrc.com
+```
+
+The `#base.dns.swthrc.com` on every line is what makes unbound **verify** the
+certificate; without it the connection is encrypted but unauthenticated, and anyone
+in the network path could intercept it. unbound spreads queries over the addresses
+and stops using one that fails, so this is client-side failover. Addresses rather
+than the hostname, because unbound would need DNS to look up its own forwarder.
+Keep your own DNSSEC validation on; galenaDNS validates too, and two checks cost
+nothing. Tested 2026-09-27 against both nodes: ordinary names resolve, an ad domain
+returns NXDOMAIN (so the answer really came through galenaDNS), and a wrong TLS name
+in place of `base.dns.swthrc.com` makes every lookup fail, as it should.
+
+**ASUS routers** — stock Asuswrt (3.0.0.4.386 and later) and Asuswrt-Merlin do DoT
+themselves, which is the way to cover devices that cannot be configured — smart
+TVs, consoles, anything with no DNS setting — since they all use the router:
+
+1. **WAN → Internet Connection → WAN DNS Setting**
+   - Connect to DNS Server automatically: **No**; DNS Server 1 `2.28.3.17`, DNS
+     Server 2 `46.62.237.108`
+   - DNS Privacy Protocol: **DNS-over-TLS (DoT)**
+   - DNS-over-TLS Profile: **Strict** — *Opportunistic* silently falls back to
+     cleartext when the TLS connection fails, which defeats the point
+   - DNS-over-TLS Server List: add both nodes, each with TLS Port `853` and TLS
+     Hostname `base.dns.swthrc.com`: `2.28.3.17` and `46.62.237.108` (and the two
+     IPv6 addresses above, if your connection has IPv6)
+   - Apply
+2. **LAN → DHCP Server**: leave the DNS server fields empty, so devices are told to
+   use the router.
+3. Optional: **DNS Director** (LAN → DNS Director on recent stock firmware;
+   *DNSFilter* on Merlin) set to *Router* catches devices that ignore DHCP and
+   hard-code a public resolver.
+
+The whole household then reaches galenaDNS from one address, which is exactly what
+the per-address limit is sized for. A browser with its own secure-DNS setting still
+bypasses the router, and Strict mode means the network has no DNS if galenaDNS is
+unreachable — see docs/TERMS.md. Menu names follow ASUS's current firmware and
+move between versions; this has not been tried on ASUS hardware here, so check the
+result with browserleaks.com/dns from a device on the network.
+
+**Other routers** — the same principle: enter every node's address with DoT, the TLS
+hostname `base.dns.swthrc.com`, and a strict profile if offered. How many servers a
+router accepts, and whether it fails over between them rather than only using the
+first, varies by firmware.
 
 **Check it's working.** On the configured device or browser, open
 [browserleaks.com/dns](https://browserleaks.com/dns). Every server it lists should
