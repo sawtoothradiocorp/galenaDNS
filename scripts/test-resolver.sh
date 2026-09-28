@@ -441,10 +441,21 @@ fi
 # shut. That happened on 2026-09-27 from a VPN exit, and cost a scare. 192.0.2.1
 # is TEST-NET-1 (RFC 5737): nothing serves DNS there, so an answer from it can
 # only have come from the network in between.
+#
+# One attempt is not enough: on 2026-09-27 the same network answered 192.0.2.1
+# five times out of five, but a single control query in one run went unanswered,
+# and that run FAILed fsn1-a as an open resolver while mtbaldy saw its port 53
+# closed. So: up to three tries up front, and again the moment a node appears to
+# answer — a FAIL needs the node answering AND the dead address staying silent.
+network_intercepts() {
+  local _
+  for _ in 1 2 3; do
+    dig @192.0.2.1 +timeout=3 +tries=1 "$CONTROL" A 2>/dev/null | grep -q 'status: NOERROR' && return 0
+  done
+  return 1
+}
 intercepted=0
-if dig @192.0.2.1 +timeout=3 +tries=1 "$CONTROL" A 2>/dev/null | grep -q 'status: NOERROR'; then
-  intercepted=1
-fi
+network_intercepts && intercepted=1
 
 if [[ -z $probe_ip ]]; then
   skip "port 53 is closed" "could not determine an address to probe"
@@ -460,8 +471,13 @@ else
     # shellcheck disable=SC2086
     if dig @"$probe_ip" $extra +timeout=3 +tries=1 "$CONTROL" A 2>/dev/null | grep -q 'status: NOERROR'; then
       closed=0
-      fail "port 53 is closed ($( [[ -z $extra ]] && echo UDP || echo TCP ))" \
-        "${probe_ip} answered a plaintext query — this is an open resolver"
+      if network_intercepts; then
+        skip "port 53 is closed ($( [[ -z $extra ]] && echo UDP || echo TCP ))" \
+          "an answer came back, but 192.0.2.1 answers too — this network intercepts port 53"
+      else
+        fail "port 53 is closed ($( [[ -z $extra ]] && echo UDP || echo TCP ))" \
+          "${probe_ip} answered a plaintext query and this network does not intercept — this is an open resolver"
+      fi
     fi
   done
   if ((closed)); then
