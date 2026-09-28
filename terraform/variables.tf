@@ -564,6 +564,51 @@ variable "dynblock_ring_entries" {
   }
 }
 
+# DNS tunnelling: a covert channel carried in query names and answers, aimed at
+# an authoritative server the tunneller runs. An encrypted public resolver is an
+# ideal carrier — the local network sees only DoT/DoH — and every tunnelled query
+# is a unique name, so all of it goes upstream from THIS node's address, where a
+# heavy tunnel can get the node throttled for everyone.
+#
+# The limits below are per query and record nothing: dnsdist looks at one query,
+# decides, and forgets it. That catches the default settings of the common tools
+# (iodine, dnscat2), which pack names close to the 255-byte maximum and prefer
+# the NULL record type. It does NOT catch a patient tunnel using short names at
+# a low rate — spotting that means counting names per domain over time, which is
+# exactly the record-keeping this resolver refuses. The per-address rate limit is
+# what caps such a tunnel, at roughly 5-10 KB/s. Matches are answered REFUSED,
+# never dropped: a drop on DoT closes the client's whole connection, far too harsh
+# for a false positive, while REFUSED fails one lookup and is distinguishable from
+# a blocklist NXDOMAIN when debugging.
+
+variable "tunnel_max_qname_bytes" {
+  description = <<-EOT
+    Refuse any query whose name is longer than this on the wire (the protocol
+    maximum is 255). 0 disables the rule.
+
+    220 because tunnelling tools fill names to near 255 by default, while the
+    longest legitimate names known — antivirus reputation lookups such as McAfee
+    GTI and Sophos SXL, which encode file hashes into the name — typically run
+    100-180 bytes. That upper figure is from published descriptions of those
+    services, not measured here: this resolver records no names, so it cannot
+    measure them. `make audit` reports how many queries this rule has matched,
+    as a count only, which is the signal to watch for false positives.
+  EOT
+  type        = number
+  default     = 220
+
+  validation {
+    condition     = var.tunnel_max_qname_bytes == 0 || (var.tunnel_max_qname_bytes >= 100 && var.tunnel_max_qname_bytes <= 255)
+    error_message = "tunnel_max_qname_bytes must be 0 (off) or between 100 and 255. Below 100 refuses ordinary long names — IPv6 reverse lookups alone are 74 bytes."
+  }
+}
+
+variable "refuse_tunnel_qtypes" {
+  description = "Refuse queries for record type NULL (10) and for 65399, the private-use type iodine uses. Nothing ordinary asks for either. TXT is deliberately NOT included: tunnels use it, but so do SPF, DKIM and domain verification."
+  type        = bool
+  default     = true
+}
+
 variable "rate_limit_exempt_cidrs" {
   description = "CIDRs exempt from rate limiting and dynamic blocks. Defaults to admin_cidr so your own testing cannot lock you out. Set to [] for no exemptions."
   type        = list(string)

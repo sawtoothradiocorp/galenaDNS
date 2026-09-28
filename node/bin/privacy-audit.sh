@@ -438,6 +438,25 @@ if [[ -r $dconf ]]; then
   else
     pass "dnsdist webserver is disabled"
   fi
+
+  # Tunnelling limits: running as configured, and how often each has fired. The
+  # count comes from showRules(), which keeps a number per rule and nothing about
+  # any query — the only way to watch for false positives without logging names.
+  # A policy check rather than a privacy one, hence WARN rather than FAIL.
+  rules=$(dnsdist -c -e 'showRules()' 2>/dev/null || true)
+  tmax=$(grep -oE '^local tunnelMaxQnameBytes = [0-9]+' "$dconf" | grep -oE '[0-9]+$' || echo 0)
+  for r in tunnel-long-qname tunnel-qtype; do
+    n=$(awk -v r="$r" '$2 == r { print $3 }' <<< "$rules")
+    want=1
+    [[ $r == tunnel-long-qname && $tmax == 0 ]] && want=0
+    [[ $r == tunnel-qtype && ${GALENA_TUNNEL_REFUSE_QTYPES:-1} == 0 ]] && want=0
+    label=$([[ $r == tunnel-long-qname ]] && echo "names over ${tmax} bytes refused" || echo "NULL/65399 queries refused")
+    if ((want)) && [[ -n $n ]]; then
+      pass "tunnelling: ${label}" "${n} refused since dnsdist started (count only)"
+    elif ((want)); then
+      warn "tunnelling: ${label}" "configured, but no ${r} rule is running — restart dnsdist"
+    fi
+  done
 else
   fail "dnsdist configuration is present" "${dconf} missing"
 fi

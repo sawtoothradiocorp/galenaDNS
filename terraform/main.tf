@@ -24,6 +24,8 @@ locals {
     GALENA_RPZ_UPDATE_INTERVAL     = var.rpz_update_interval
     GALENA_MAX_QPS_PER_IP          = tostring(var.max_qps_per_ip)
     GALENA_MAX_QPS_BURST_PER_IP    = tostring(var.max_qps_burst_per_ip)
+    GALENA_TUNNEL_MAX_QNAME_BYTES  = tostring(var.tunnel_max_qname_bytes)
+    GALENA_TUNNEL_REFUSE_QTYPES    = var.refuse_tunnel_qtypes ? "1" : "0"
     GALENA_DYNBLOCK_QPS            = tostring(var.dynblock_qps)
     GALENA_DYNBLOCK_WINDOW         = tostring(var.dynblock_window)
     GALENA_DYNBLOCK_DURATION       = tostring(var.dynblock_duration)

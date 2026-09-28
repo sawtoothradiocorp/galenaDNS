@@ -21,6 +21,8 @@ IP=""
 INCLUDE_RATELIMIT=0
 RL_QPS=50
 RL_BURST=500
+TUNNEL_MAX=220
+TUNNEL_QTYPES=1
 INSECURE=0
 DOH_PATH="/dns-query"
 MALWARE_CANARY=""
@@ -56,6 +58,9 @@ Usage: $0 --domain <fqdn> [--ip <addr>] [options]
                         dynamic blocks are on, it can get you blocked briefly.
   --rate QPS/BURST      The configured limit to check against (default 50/500).
                         `make test` passes the deployed values.
+  --tunnel MAX/QTYPES   The configured tunnelling limits: longest allowed name in
+                        wire bytes (0 = off) and whether NULL/65399 are refused
+                        (1/0). Default 220/1; `make test` passes deployed values.
   --insecure            Skip certificate validation (for acme_staging = true).
   -h, --help            This.
 EOF
@@ -71,6 +76,7 @@ while (($#)); do
     --allowlist) ALLOWLIST_FILE=$2; shift 2 ;;
     --include-ratelimit) INCLUDE_RATELIMIT=1; shift ;;
     --rate) RL_QPS=${2%/*}; RL_BURST=${2#*/}; shift 2 ;;
+    --tunnel) TUNNEL_MAX=${2%/*}; TUNNEL_QTYPES=${2#*/}; shift 2 ;;
     --insecure) INSECURE=1; shift ;;
     -h | --help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
@@ -365,6 +371,57 @@ if have kdig; then
   fi
 else
   skip "blocking checks" "kdig missing"
+fi
+
+# ===========================================================================
+section "Tunnelling limits"
+# ===========================================================================
+# The boundary is tested exactly — a name of MAX bytes must be answered and one
+# of MAX+1 refused — because an off-by-one either way is invisible otherwise.
+# Names are random labels under $CONTROL, so each is a cache miss that reaches
+# the upstream once: two queries a run, negligible.
+if ((TUNNEL_MAX > 0)); then
+  read -r t_at t_over < <(python3 - "$TUNNEL_MAX" "$CONTROL" <<'PY'
+import random, string, sys
+mx, suffix = int(sys.argv[1]), sys.argv[2]
+def mk(L):
+    base = suffix.split(".")
+    wire = lambda labs: sum(len(l) + 1 for l in labs) + 1
+    rem, labs, r = L - wire(base), [], random.SystemRandom()
+    while rem > 0:
+        n = min(63, rem - 1)
+        if rem - (n + 1) == 1:
+            n -= 1
+        labs.append("".join(r.choice(string.ascii_lowercase + string.digits) for _ in range(n)))
+        rem -= n + 1
+    assert wire(labs + base) == L
+    return ".".join(labs + base)
+print(mk(mx), mk(mx + 1))
+PY
+  )
+  r_at=$(rcode_of "$(q_dot "$t_at" A)")
+  r_over=$(rcode_of "$(q_dot "$t_over" A)")
+  if [[ $r_over == REFUSED && -n $r_at && $r_at != REFUSED ]]; then
+    pass "long query names refused" "${TUNNEL_MAX} bytes answered (${r_at}), $((TUNNEL_MAX + 1)) REFUSED"
+  elif [[ $r_over != REFUSED ]]; then
+    fail "long query names refused" "a $((TUNNEL_MAX + 1))-byte name returned ${r_over:-nothing}, expected REFUSED"
+  else
+    fail "long query names refused" "a ${TUNNEL_MAX}-byte name returned ${r_at:-nothing} — the limit is tighter than configured"
+  fi
+else
+  skip "long query names refused" "tunnel_max_qname_bytes = 0"
+fi
+if ((TUNNEL_QTYPES)); then
+  r_null=$(rcode_of "$(q_dot "$CONTROL" TYPE10)")
+  r_priv=$(rcode_of "$(q_dot "$CONTROL" TYPE65399)")
+  r_txt=$(rcode_of "$(q_dot "$CONTROL" TXT)")
+  if [[ $r_null == REFUSED && $r_priv == REFUSED && -n $r_txt && $r_txt != REFUSED ]]; then
+    pass "tunnel record types refused" "NULL and 65399 REFUSED; TXT still answered (${r_txt})"
+  else
+    fail "tunnel record types refused" "NULL ${r_null:-none}, 65399 ${r_priv:-none}, TXT ${r_txt:-none} — expected REFUSED, REFUSED, answered"
+  fi
+else
+  skip "tunnel record types refused" "refuse_tunnel_qtypes = false"
 fi
 
 # ===========================================================================

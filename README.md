@@ -615,8 +615,9 @@ FAIL:
 4. **Policy zones** — every zone has `rpz-log: no`, and the allowlist is first.
    Reports per-zone record counts and file sizes.
 5. **dnsdist** — config is free of every logging and remote-logging directive;
-   `setSecurityPollSuffix("")` present so there is no version phone-home;
-   responses not recorded; webserver state matches the variable.
+   `setSecurityPollSuffix("")` present so there is no version phone-home; the
+   query ring is off; webserver state matches the variable; and the tunnelling
+   rules are running, with how many queries each has refused — a count only.
 6. **Outbound connections** — flags anything established *from* this host to a port
    that is not DNS, ACME or the blocklist CDN, which is what a remote log sink would
    look like. Inbound and outbound are told apart by the local port, so clients on
@@ -786,6 +787,33 @@ rule that shared it never worked at all: rcode rules read the *response* ring, a
 responses are not recorded. A university or CGNAT range behind one address needs a
 different limit; see BACKLOG.md.
 
+**DNS tunnelling is limited per query, and only at the extremes.** Tunnelling hides
+a data channel in query names and answers, aimed at an authoritative server the
+tunneller runs, and an encrypted public resolver is an ideal carrier: the local
+network sees only DoT/DoH, while every tunnelled query is a unique name that
+leaves from the node's own address. Two dnsdist rules refuse, one query at a time
+and without recording anything:
+
+- names longer than **220 bytes** on the wire (`tunnel_max_qname_bytes`). Tools
+  such as iodine and dnscat2 fill names to near the 255-byte maximum by default;
+  the longest legitimate names known, antivirus reputation lookups that encode a
+  file hash, typically run 100-180. That figure comes from how those services are
+  described, not from measurement — this resolver records no names to measure;
+- record types **NULL** and **65399** (`refuse_tunnel_qtypes`), which nothing
+  ordinary asks for and iodine prefers. TXT is left alone: SPF, DKIM and domain
+  verification need it.
+
+Both answer **REFUSED**, never a drop: a drop on DoT closes the client's whole
+connection, while REFUSED fails one lookup and is distinguishable from a blocklist
+NXDOMAIN. They run before the rate-limit exemption, so they apply to everyone.
+Verified before deployment on a throwaway dnsdist: 220 bytes answered, 221 refused.
+
+What this does not do is stop a patient tunnel. Short names at a low rate look like
+anything else, and catching them means counting names per domain over time — the
+record-keeping this resolver refuses. The per-address limit caps such a tunnel at
+roughly 5-10 KB/s. `make audit` reports how many queries each rule has refused, so
+a legitimate service tripping the length rule shows up as a count, not a log.
+
 **ICMP is allowed on purpose.** QUIC depends on path MTU discovery. Dropping
 "fragmentation needed" and ICMPv6 "packet too big" produces the worst class of
 bug: DoQ and DoH3 work from most networks and hang from a few.
@@ -880,6 +908,7 @@ monitor/            the external prober, its systemd units and installer, for
 | unbound OOMs or restarts | Lower `unbound_msg_cache_size`/`unbound_rrset_cache_size`, or use a larger server type. `make audit` section 11 reports RSS |
 | Everything SERVFAILs | The upstream is unreachable and `forward-first: no` means there is no cleartext fallback, by design. Check `ss -tn state established '( dport = :853 )'` on the node |
 | A site is blocked and the allowlist does not help | It is an upstream block, not a local one. See "Overriding an upstream block" |
+| A lookup returns REFUSED | A tunnelling rule matched: the name is over `tunnel_max_qname_bytes` on the wire, or the type is NULL or 65399. `make audit` section 5 shows each rule's count. If a real service trips the length rule, raise it (at most 255) or set it to 0 |
 | A blocked site gives SERVFAIL rather than NXDOMAIN | Expected for an upstream block on a DNSSEC-signed zone: our validator rejects the forged denial. Confirm with `kdig +tls +cdflag` — NXDOMAIN there means validation is doing it |
 
 ```sh

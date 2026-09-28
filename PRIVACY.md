@@ -131,6 +131,10 @@ Two further consequences, which apply to blocking wherever it happens:
   your client validates DNSSEC itself, a blocked lookup looks like an unsigned
   denial rather than a cryptographically proven one. This is inherent to RPZ
   filtering and is not specific to this resolver.
+- **Some queries are refused outright, as a tunnelling defence**: names longer than
+  220 bytes, and the NULL and 65399 record types. Each query is judged on its own
+  and forgotten; nothing about it is kept except a per-rule count of how many have
+  been refused. It stops crude tunnels, not careful ones — see the README.
 - **Threat feeds have false positives**, and response-IP blocking has the most —
   one shared CDN address in the feed can take out every site behind it. The
   allowlist is the remedy and the README documents both the domain and the

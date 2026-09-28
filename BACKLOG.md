@@ -142,11 +142,14 @@ Not code. All of it blocks "lightly advertised", none of it blocks personal use.
   forward complaints with a deadline. The honest answer — "we retain nothing, so we
   cannot tell you which user did this" — is much better delivered from a prepared
   position than improvised. Confirm Hetzner's tolerance for open resolvers first.
-- **DNS tunnelling is the abuse this will actually attract**, and detecting it means
-  inspecting query names, which the entire design forbids. dnsdist can match qname
-  length and label count inline, per-query, without recording anything — that
-  catches crude tunnelling and not a patient adversary. Worth doing; worth not
-  overselling.
+- **DNS tunnelling — inline limits in place, 2026-09-27.** Names over 220 bytes and
+  NULL/65399 queries are REFUSED, judged one query at a time and never recorded
+  (README "Design choices"). That stops the common tools at their defaults and
+  nothing patient: a tunnel with short names at a low rate is indistinguishable
+  from normal traffic without per-domain counting, which this design refuses, and
+  is capped only by the per-address rate limit. Open question: whether 220 bytes
+  ever refuses a legitimate antivirus reputation lookup. `make audit` reports each
+  rule's match count, which is how to find out.
 - **Privacy policy naming a data controller.** IP addresses are personal data under
   GDPR: they pass through every connection, and the per-address rate counters
   hold them for 5-15 minutes after an address's last query. A public EU service plausibly needs

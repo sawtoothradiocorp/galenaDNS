@@ -156,6 +156,29 @@ addDOQLocal("[::]:853", certFile, keyFile, { reusePort = true })
 -- Abuse controls
 -- ---------------------------------------------------------------------------
 
+-- DNS tunnelling, judged one query at a time and never recorded. Reasoning and
+-- limits are in terraform/variables.tf above tunnel_max_qname_bytes.
+--
+-- These come BEFORE the exemption below on purpose: exemption exists so the
+-- admin cannot rate-limit themselves out, not to exempt anyone from policy. It
+-- also means the prober and `make test` see the same rules as everyone else.
+--
+-- REFUSED, not Drop: dnsdist answers a Drop on DoT by closing the client's
+-- connection (measured 2026-09-27), and a false positive should cost one lookup.
+-- Each rule is named so `make audit` can report its match COUNT via showRules().
+local tunnelMaxQnameBytes = ${GALENA_TUNNEL_MAX_QNAME_BYTES}
+if tunnelMaxQnameBytes > 0 then
+  -- Matches names OUTSIDE [0, max], i.e. longer than max bytes on the wire.
+  addAction(QNameWireLengthRule(0, tunnelMaxQnameBytes), RCodeAction(DNSRCode.REFUSED),
+    { name = "tunnel-long-qname" })
+end
+if ${GALENA_TUNNEL_REFUSE_QTYPES} == 1 then
+  -- NULL (10) and 65399, the private-use type iodine prefers. Integers rather
+  -- than DNSQType names, since not every build exports a NULL constant.
+  addAction(OrRule({ QTypeRule(10), QTypeRule(65399) }), RCodeAction(DNSRCode.REFUSED),
+    { name = "tunnel-qtype" })
+end
+
 local exemptNMG = newNMG()
 ${GALENA_EXEMPT_LUA}
 
