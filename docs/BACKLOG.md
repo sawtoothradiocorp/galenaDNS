@@ -169,30 +169,72 @@ Not code. All of it blocks "lightly advertised", none of it blocks personal use.
   engineering: the **lawful basis** relied on; whether a US-based controller
   serving people in the EU needs an **Article 27 representative** there. Privacy
   requests now go to their own address, dataprotection@ — see below.
-- **Sign the Apple configuration profiles — improves trust, does not block.**
-  Unsigned, they install with a red "Unverified"; signed, with a green "Verified"
-  and the signer's name. For a stranger, "Unverified" on something that redirects
-  all their DNS is exactly what they have been warned about, so this removes the
-  biggest hesitation in the Apple setup — though it adds little security: the
-  profiles are already served over HTTPS, and the DNS connection is
-  certificate-verified on every query regardless.
+- **Sign the Apple configuration profiles — a smaller payoff than it looks,
+  researched 2026-09-28.** Signing makes a profile tamper-evident and puts a name
+  on the install sheet. It does *not* produce the green "Verified" this item used
+  to promise: that badge and its checkmark were removed in iOS 18 and macOS 15
+  ([iMazing](https://imazing.com/guides/how-to-sign-apple-configuration-profiles),
+  updated 2026-03-25). A current device shows three states instead — `Signed by
+  <certificate name>` in plain text when the chain is trusted, a red **Not
+  Verified** when it is not, and **Not Signed** for the profiles as they ship
+  today. So the gain is an attributable author, not a green tick, and a broken or
+  expired signature is *worse* than no signature. It still adds little security:
+  the profiles are served over HTTPS and the DNS connection is
+  certificate-verified on every query regardless. README "Apple" and the notice
+  page both still say "Unverified", which is pre-iOS-18 wording — see what a
+  device actually says before rewriting either.
   - **Never sign with the resolver's TLS certificate.** Its key protects every
     DoT/DoH session; copying it off the nodes for a cosmetic gain is a bad trade.
-  - **Plan: a one-year certificate, re-signed yearly by hand.** A free Actalis
-    S/MIME certificate for e.g. `dataprotection@swthrc.com`, or a paid
-    code-signing one. Untested: whether iOS shows such a signature as "Verified" —
-    try it on an iPhone and a Mac before changing the page or README, which still
-    explain "Unverified". If it verifies: a `make sign-profiles` target (`openssl
-    smime -sign ... -nodetach -outform der`) writing into klix-hq's `public/`, the
-    key kept on the operator's machine like the other credentials, and a calendar
-    reminder a month before expiry.
-  - **Fallback: a separate Let's Encrypt certificate** for a signing name such as
-    `profiles.swthrc.com` (DNS-01, its own TXT-only Route 53 key). Free and
-    publicly trusted — widely reported to verify, not tested here — but 90 days or
-    less, so re-signing must be automated.
-  - **To confirm on a device:** that iOS checks the signature only at install time,
-    so a lapsed certificate makes NEW installs "Not Verified" while installed
-    profiles keep working.
+  - **Code-signing certificates are out.** Since 2023-06-01 the CA/Browser Forum
+    has required code-signing keys to be generated in, and never leave, FIPS 140-2
+    level 2 hardware
+    ([DigiCert](https://knowledge.digicert.com/alerts/code-signing-changes-in-2023)),
+    so `openssl smime -sign` with a key file cannot work at all — it would take a
+    USB token, PKCS#11 and $200-400 a year.
+  - **The test that decides the rest, and it is free.** Issue a Let's Encrypt
+    certificate for a signing-only name such as `profiles.swthrc.com` (DNS-01,
+    the TXT-only Route 53 key already in use), sign a copy of the DoT profile,
+    install it on an iPhone and a Mac. That settles in one sitting what iOS 26
+    displays and whether a `serverAuth` certificate is accepted at all — iMazing
+    says TLS certificates work, Apple documents nothing. Sign a second copy with a
+    deliberately expired certificate to see the expired-signer state without
+    waiting 90 days for it.
+  - **The expiry question, which this item had backwards.** It assumed iOS checks
+    the signature only at install time, so a lapsed certificate would affect new
+    installs alone. The only report found says installed profiles get a red
+    "Untrusted" label once the signing certificate expires ([Apple Developer
+    Forums](https://developer.apple.com/forums/thread/75418) — a community answer,
+    not Apple documentation). If that is right, a 90-day certificate turns every
+    existing install red three months later, and the Let's Encrypt option dies
+    with it.
+  - **Option A — Let's Encrypt, free, if expiry behaves.** `Signed by
+    profiles.swthrc.com` ties the profile to the same domain as the resolver
+    hostname, which is the most honest label available here. Costs: 90 days or
+    less, so re-signing and the klix-hq push have to be automated, and the
+    intermediates must be embedded with `-certfile`, since only ISRG Root X1 is
+    preinstalled.
+  - **Option B — Apple Developer Program, $99/year.** The `Developer ID
+    Application` certificate is the one type trusted without any intermediate
+    juggling, and it lasts years, so re-signing is rare; `security cms -S -N
+    "Developer ID Application: ..."` signs without exporting the key from the
+    Keychain. Two caveats: organization enrollment needs a D-U-N-S number for
+    Sawtooth Radio Corp LLC, and individual enrollment instead puts the operator's
+    personal name on every install sheet — the opposite of what `9f46fa8` did to
+    this repo. At $99 a year it also costs more than `hel1-a` does ($85).
+  - **Option C — free Actalis S/MIME, one year.** Under the current S/MIME
+    baseline requirements a mailbox-validated certificate's subject is the email
+    address alone, so the sheet would read `Signed by dataprotection@swthrc.com`.
+    Whether Apple's installer accepts an `emailProtection`-only EKU is documented
+    nowhere and untested here; iMazing names code-signing and TLS certificates
+    only. Also: actalis.com was unreachable from the operator's network on
+    2026-09-28, and their free flow generates the keypair server-side.
+  - **Mechanics, tested 2026-09-28 against this repo's own DoT profile.** `openssl
+    smime -sign -signer cert.pem -inkey key.pem -certfile chain.pem -nodetach
+    -outform der` produces a DER profile that macOS's own `security cms -D` parses
+    back to the original plist. A `make sign-profiles` target writing into
+    klix-hq's `public/` would keep the unsigned plist as the source of truth and
+    publish the DER beside it; every `make mobileconfig` invalidates the
+    signature, so re-signing belongs in the same step.
 - **Legal exposure — liability settled, blocking orders live.**
   - *Liability, Germany: resolved in the resolver's favour.* Sony won injunctions
     against Quad9 in Hamburg and Leipzig, holding a resolver liable for what it
