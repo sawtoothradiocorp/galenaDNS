@@ -9,7 +9,8 @@ document is wrong about that node — trust the audit, not the prose.
 
 This resolver is operated by **Sawtooth Radio Corp LLC**, a Colorado limited
 liability company, which decides what it processes and why — the data controller,
-in the GDPR's terms. Questions about this document, and requests about data
+in the GDPR's terms. That makes it a **US company**, whose servers happen to be in
+the EU; what that does and does not mean is under "What this cannot promise". Questions about this document, and requests about data
 concerning you, go to
 **[dataprotection@swthrc.com](mailto:dataprotection@swthrc.com)**. Abuse reports go
 to abuse@swthrc.com — see [ABUSE.md](ABUSE.md) — and the terms of use are in
@@ -254,9 +255,27 @@ Two further consequences, which apply to blocking wherever it happens:
   fixed public test names (`example.com`, two DNSSEC test domains, one ad domain),
   so its traffic is indistinguishable from anyone else's and carries nothing about
   who uses the resolver.
-- **Legal compulsion.** Server operators can be ordered to start logging. What
-  this design gives you is that there is nothing retained to hand over about the
-  past. It cannot promise anything about the future.
+- **The operator is a US company, and hosting in the EU does not change that.**
+  Where the servers are matters less than who controls them. US legal process
+  applies to Sawtooth Radio Corp LLC wherever its servers sit — including
+  process that reaches data a US company controls regardless of where it is
+  stored, such as under the CLOUD Act. Servers in Germany and Finland do not put
+  this service outside US reach.
+
+  The location *adds* a second legal system rather than replacing the first: EU
+  law applies too — the GDPR, the Digital Services Act, national courts' orders
+  to block domains — and German or Finnish authorities can act on the hosting
+  provider directly, without involving the operator at all.
+
+  Services incorporated outside the US, as Quad9 is in Switzerland, are set up
+  that way so the *company itself* is beyond direct US reach. This one is not.
+
+- **Legal compulsion.** What protects you under every one of those systems is the
+  design, not the geography: nothing about past queries is retained, so there is
+  nothing to hand over about the past, to any country. What no design and no
+  location can prevent is a lawful order, in either jurisdiction, to *start*
+  collecting from now on — possibly with an order not to say so. This document
+  cannot promise anything about the future.
 - **Timing and volume are observable** to anyone watching the network, even though
   the content is encrypted.
 - **This is one operator's server.** You are trusting whoever runs it. The
