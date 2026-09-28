@@ -203,16 +203,14 @@ Not code. All of it blocks "lightly advertised", none of it blocks personal use.
   already make, so it has to be true first:
   - ~~Create `dataprotection@swthrc.com`~~ — done 2026-09-27. Deliberately not
     `privacy@`, which receives Privacy.com account mail.
-  - **Publish the notice page** at <https://sawtoothradiocorp.com/galena-dns>, the
-    location TERMS.md now names for the 90-day notice. It returned HTTP 403 on
-    2026-09-27. It is also where people will look for a contact, so it should carry
-    abuse@ and dataprotection@ and link these documents.
-  - **`swthrc.com` from lapsing**: auto-renew verified on (Route 53 Domains,
-    expiry 2027-08-01). **The transfer lock is off** — whois shows status `ok`,
-    not `clientTransferProhibited` — so the name can be moved away through a
-    compromised account or a social-engineered registrar request. Turn it on:
-    `aws route53domains enable-domain-transfer-lock --domain-name swthrc.com
-    --region us-east-1`.
+  - ~~Publish the notice page~~ — live 2026-09-27 at
+    <https://sawtoothradiocorp.com/galena-dns> (the klix-hq repo), with the
+    service-notice box TERMS.md points to, setup, contacts, and links to these
+    documents; the Apple profiles are served alongside with the content type iOS
+    needs to offer installation. The homepage links to it.
+  - ~~`swthrc.com` from lapsing~~ — auto-renew on (expiry 2027-08-01) and the
+    transfer lock enabled 2026-09-27 (`clientTransferProhibited`);
+    `sawtoothradiocorp.com` already had both.
   - **Legal review of TERMS.md** — being scheduled. The warranty and liability
     wording, whether to name a governing law and venue (deliberately absent), the
     GDPR items above, and the blocking-order question below.
@@ -260,7 +258,13 @@ Not code. All of it blocks "lightly advertised", none of it blocks personal use.
   from "we retain nothing" and should be decided, not drifted into.
 - **Reboot policy.** `unattended-upgrades` patches packages; kernel updates need a
   reboot that nothing currently performs or schedules.
-- **Publishing the repo.** GitHub, for discovery next to Hagezi and the dnsdist
-  mirrors. Confirm `git log --all -- terraform/terraform.tfstate` is empty first —
-  state holds node addresses and resource IDs, and although it is gitignored and was
-  never committed, that is worth verifying rather than assuming.
+- **Publishing the repo — done, 2026-09-27.** Public at
+  <https://gitlab.com/sawtooth-radio-corp/galena-dns>, push-mirrored by GitLab to
+  <https://github.com/sawtoothradiocorp/galena-dns> through a write deploy key (no
+  expiry, scoped to that one repo). MIT licensed. Before the first push the history
+  was rewritten — the only safe moment to do it — to remove a home address and the
+  admin host's address from commit messages and old file versions, and a laptop
+  hostname from the author field; then every blob in it was scanned for keys and
+  tokens (none; the only 64-character strings are checksums). tfstate and tfvars
+  were never committed. The node addresses were delete-protected first, since the
+  docs publish them.
