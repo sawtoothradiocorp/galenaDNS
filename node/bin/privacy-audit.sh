@@ -282,7 +282,7 @@ if [[ -n $upstreams ]]; then
     pass "recursion is not happening here" "authoritative servers see ${seen} (the upstream)"
   fi
 
-  note "the upstream sees every query name — see PRIVACY.md, this is the trade"
+  note "the upstream sees every query name — see docs/PRIVACY.md, this is the trade"
 else
   # ---- Full recursion posture ---------------------------------------------
   if [[ -n $fwd ]]; then
@@ -560,7 +560,7 @@ note "RPZ zone files are blocklists we installed, not records of anything asked"
 if [[ -n ${GALENA_FORWARD_UPSTREAMS:-} ]]; then
   note "nothing about a query is retained HERE, but the upstream receives every"
   note "query name: ${GALENA_FORWARD_UPSTREAMS%% *} and peers. Their retention is their"
-  note "policy, not ours, and this audit cannot verify it. See PRIVACY.md."
+  note "policy, not ours, and this audit cannot verify it. See docs/PRIVACY.md."
 fi
 
 # ===========================================================================
@@ -662,5 +662,5 @@ if ((fail_n > 0)); then
   exit 1
 fi
 
-printf '\nNo failures. What IS retained is listed in section 9 and in PRIVACY.md.\n'
+printf '\nNo failures. What IS retained is listed in section 9 and in docs/PRIVACY.md.\n'
 exit 0

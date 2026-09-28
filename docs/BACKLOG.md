@@ -138,10 +138,18 @@ Not code. All of it blocks "lightly advertised", none of it blocks personal use.
   A university or CGNAT range — thousands behind one address — would be throttled;
   serving those means a much larger limit or per-network exemptions, and is a
   separate decision.
-- **Abuse-handling posture, written down before the first complaint.** Hetzner will
-  forward complaints with a deadline. The honest answer — "we retain nothing, so we
-  cannot tell you which user did this" — is much better delivered from a prepared
-  position than improvised. Confirm Hetzner's tolerance for open resolvers first.
+- **Abuse-handling posture — written, 2026-09-27: [ABUSE.md](ABUSE.md).** Contact
+  abuse@swthrc.com; what these addresses do and do not do on the network; what a
+  report can and cannot get; Hetzner's forwarding process from its own Digital
+  Services Act page (a "reasonable deadline", a reminder, then a possible IP lock
+  until a statement arrives); the common complaints with their honest answers; a
+  statement template; how to block a client. Still open:
+  - **Hetzner's stance on public encrypted resolvers** could not be found in
+    anything Hetzner publishes. The classic objection — an open resolver on 53 as
+    an amplifier — does not apply, since 53 is closed, but ask their support before
+    advertising rather than learn it from a lock.
+  - **The 24-hour acknowledgement target** in ABUSE.md is a commitment; keep it
+    only if someone will actually read abuse@ that often.
 - **DNS tunnelling — inline limits in place, 2026-09-27.** Names over 220 bytes and
   NULL/65399 queries are REFUSED, judged one query at a time and never recorded
   (README "Design choices"). That stops the common tools at their defaults and
@@ -150,11 +158,14 @@ Not code. All of it blocks "lightly advertised", none of it blocks personal use.
   is capped only by the per-address rate limit. Open question: whether 220 bytes
   ever refuses a legitimate antivirus reputation lookup. `make audit` reports each
   rule's match count, which is how to find out.
-- **Privacy policy naming a data controller.** IP addresses are personal data under
-  GDPR: they pass through every connection, and the per-address rate counters
-  hold them for 5-15 minutes after an address's last query. A public EU service plausibly needs
-  this, which means attaching a real identity or entity. A personal-exposure
-  decision, not a technical one.
+- **Data controller — named, 2026-09-27:** Sawtooth Radio Corp LLC, in PRIVACY.md
+  with the recipients (Hetzner, Quad9, AWS) and what a data-subject request can
+  return. IP addresses are personal data under the GDPR: they pass through every
+  connection, and the per-address rate counters hold them for 5-15 minutes after an
+  address's last query. Still open, and a matter for legal review rather than
+  engineering: the **lawful basis** relied on; whether a US-based controller
+  serving people in the EU needs an **Article 27 representative** there; and a
+  dedicated privacy address, since abuse@ currently takes both.
 - **Legal reading, specific to German hosting.** Sony sued Quad9 in Germany over
   resolving a piracy site and Quad9 lost at first instance — a resolver held liable
   for what it resolves, not for hosting anything. There were appeals; check the

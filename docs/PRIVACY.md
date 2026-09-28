@@ -5,6 +5,32 @@ Every claim here corresponds to a specific setting in this repository, and
 `make audit` checks the running server against them. If the audit fails, this
 document is wrong about that node — trust the audit, not the prose.
 
+## Who is responsible
+
+This resolver is operated by **Sawtooth Radio Corp LLC**, a Colorado limited
+liability company, which decides what it processes and why — the data controller,
+in the GDPR's terms. Questions about this document, and requests about data
+concerning you, go to **[abuse@swthrc.com](mailto:abuse@swthrc.com)**; so do abuse
+reports, which [ABUSE.md](ABUSE.md) covers.
+
+Three other organisations are involved, and each sees something different:
+
+| Who | Role | What they receive |
+|---|---|---|
+| Hetzner Online GmbH (Germany) | hosts both nodes, in Germany and Finland | the network traffic: every client address that connects, with timing and volume — never query names, which are encrypted in both directions |
+| Quad9 (Switzerland) | the upstream resolver | every query name, attributed to the node's address — never yours |
+| Amazon Web Services (United States) | hosts the resolver's own DNS zone; runs its health checks and alerts | nothing about any client or query |
+
+**Requests to see or erase your data.** The resolver keeps nothing linked to you
+beyond what the next section lists — a rate counter for your address that expires
+within minutes of your last query, and the state of a connection while it is open.
+There is no history to show you or to delete. A request will get an answer saying
+exactly that, not silence.
+
+Not yet settled, and recorded as open in [BACKLOG.md](BACKLOG.md): the lawful
+basis this processing relies on under the GDPR, and whether a controller based in
+the United States offering this service in the EU needs a representative there.
+
 ## Nothing about your queries is written to disk on this server
 
 Not sampled, not aggregated, not rotated. There is no query log to turn off,

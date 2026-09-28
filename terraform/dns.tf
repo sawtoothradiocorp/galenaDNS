@@ -80,7 +80,7 @@ data "aws_route53_zone" "this" {
 #     and protocols; only 853/tcp is probed.
 #
 # Route 53 has no DoT- or DNS-aware check type, so closing those gaps means an
-# external prober that speaks DNS — BACKLOG.md section 1. This is the cheap half
+# external prober that speaks DNS — docs/BACKLOG.md section 1. This is the cheap half
 # that removes a dead address automatically; that is the half that watches for the
 # quiet failures.
 #

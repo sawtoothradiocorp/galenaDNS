@@ -73,7 +73,7 @@ nodes = {
 # ]
 #
 # Or full recursion from the root, with no third-party resolver at all. Read
-# PRIVACY.md first: this hands the hosting provider every query name in cleartext.
+# docs/PRIVACY.md first: this hands the hosting provider every query name in cleartext.
 # forward_tls_upstreams = []
 
 # max_qps_per_ip = 40

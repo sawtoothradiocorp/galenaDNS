@@ -78,7 +78,7 @@ newServer({
 --
 -- Privacy: entries are keyed by QUESTION, not by client. Like unbound's own cache
 -- it can say what was asked recently, never by whom, and it never touches disk.
--- PRIVACY.md lists it alongside the other in-memory structures.
+-- docs/PRIVACY.md lists it alongside the other in-memory structures.
 local packetCacheEntries = ${GALENA_PACKET_CACHE_ENTRIES}
 if packetCacheEntries > 0 then
   local pc = newPacketCache(packetCacheEntries, {

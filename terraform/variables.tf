@@ -302,7 +302,7 @@ variable "acme_staging" {
 # Resolution posture
 # ---------------------------------------------------------------------------
 # This is the single most consequential privacy decision in the whole project,
-# so the reasoning lives here rather than only in PRIVACY.md.
+# so the reasoning lives here rather than only in docs/PRIVACY.md.
 #
 # Full recursion (forward_tls_upstreams = []) talks to the root, the TLD and the
 # domain's own nameservers in CLEARTEXT on port 53. No third-party resolver is
@@ -544,7 +544,7 @@ variable "dynblock_ring_entries" {
     Off since 2026-09-27, for two measured reasons. The ring holds a COUNT of
     entries, not a span of time: at this resolver's real traffic, 5000 entries
     was about 2 hours of client-and-name history on fsn1-a and days on hel1-a,
-    where PRIVACY.md had promised seconds. And of the two rules it fed, the
+    where docs/PRIVACY.md had promised seconds. And of the two rules it fed, the
     NXDOMAIN-flood one never worked — dnsdist evaluates rcode rules on the
     RESPONSE ring, and responses are deliberately not recorded. That left one
     rule, the sustained-rate cut-off, which MaxQPSIPRule's throttle already
@@ -553,7 +553,7 @@ variable "dynblock_ring_entries" {
     To turn dynamic blocks back on: set this so it spans dynblock_window seconds
     of TOTAL traffic across all clients (at 500 qps, 5000 covers 10 s) — shorter
     and the rules silently under-count and never fire — and accept that at low
-    traffic it retains far longer than the window. Update PRIVACY.md with it.
+    traffic it retains far longer than the window. Update docs/PRIVACY.md with it.
   EOT
   type        = number
   default     = 0

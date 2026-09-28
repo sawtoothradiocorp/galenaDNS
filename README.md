@@ -9,9 +9,13 @@ Speaks **DoH**, **DoH3**, **DoT** and **DoQ**. Nothing listens on port 53.
 Nothing about a query reaches disk *here*, and `make audit` proves it on the
 running server rather than asking you to trust the config. Queries do reach an
 upstream resolver, which is a deliberate trade — see "Design choices" and
-PRIVACY.md, where it is the first thing disclosed.
+docs/PRIVACY.md, where it is the first thing disclosed.
 
-See [PRIVACY.md](PRIVACY.md) for exactly what is and is not retained.
+See [docs/PRIVACY.md](docs/PRIVACY.md) for exactly what is and is not retained.
+
+Operated by **Sawtooth Radio Corp LLC**. Abuse reports and privacy requests go to
+[abuse@swthrc.com](mailto:abuse@swthrc.com); [docs/ABUSE.md](docs/ABUSE.md) says
+what a report can and cannot get.
 
 ---
 
@@ -33,7 +37,7 @@ by construction and not merely by firewall rule.
 **Resolution posture.** unbound forwards the root zone to Quad9 over authenticated
 DNS-over-TLS rather than recursing from the root. That is a deliberate privacy
 trade and the reasoning is in `terraform/variables.tf` above
-`forward_tls_upstreams`, in PRIVACY.md, and summarised under "Design choices"
+`forward_tls_upstreams`, in docs/PRIVACY.md, and summarised under "Design choices"
 below. In one line: recursion is cleartext, so it hands the hosting provider every
 query name on top of the client IPs it already sees, while forwarding over TLS
 splits those two halves between two parties who would have to collude.
@@ -242,7 +246,7 @@ address whose check is failing is not returned:
 Measured in a fire drill on 2026-09-27, stopping dnsdist on `hel1-a`: all 16
 checkers failed within 1m39s, the address left Google's and Cloudflare's answers at
 2m09s and 2m39s, and the alarms fired at 4m43s. On restart it was back in DNS within
-about 2m35s. BACKLOG section 1 has the full timeline.
+about 2m35s. docs/BACKLOG.md section 1 has the full timeline.
 
 Terraform state holds the configuration, not Route 53's verdict, so to ask what it
 actually thinks right now:
@@ -269,7 +273,7 @@ certificate is valid (Route 53 completes a TCP handshake, not a TLS one), that u
 is alive behind dnsdist (a dead backend still gets a green check and answers SERVFAIL),
 or that DoH, DoH3 and DoQ work (separate listeners, unprobed). Route 53 has no
 DNS-aware check type, so closing those gaps needs an external prober that speaks DNS —
-[BACKLOG.md](BACKLOG.md) section 1. Health checks remove a dead address automatically;
+[docs/BACKLOG.md](docs/BACKLOG.md) section 1. Health checks remove a dead address automatically;
 that item is what watches for the quiet failures.
 
 Nothing in the firewall had to change: both layers already accept tcp/853 from
@@ -366,7 +370,7 @@ blocks yesterday's list, and checking it needs node access the prober does not h
 IPv6 end to end: mtbaldy has no IPv6 route, so the prober checks IPv4 only, and IPv6
 is covered by the Route 53 v6 health checks, which prove TCP and nothing more. And
 there is one vantage point: a failure that only affects some networks — UDP/QUIC
-through home NAT is the classic — is invisible from a datacenter. See BACKLOG.md.
+through home NAT is the classic — is invisible from a datacenter. See docs/BACKLOG.md.
 
 ## Client setup
 
@@ -683,7 +687,7 @@ property that matters.
 ## Design choices
 
 **Forward over DoT instead of recursing.** The one decision worth reading twice,
-because the project originally did the opposite and PRIVACY.md now leads with it.
+because the project originally did the opposite and docs/PRIVACY.md now leads with it.
 
 Full recursion needs no third party, which sounds strictly better — but it speaks
 cleartext DNS on port 53. Resolving from the root means the hosting provider sees
@@ -713,7 +717,7 @@ and each otherwise walks four RPZ zones to produce an identical NXDOMAIN.
 
 It costs nothing privacy-wise: entries are keyed by the question, never by the
 client, so like unbound's own cache it can say what was asked recently but never by
-whom, and it never reaches disk. PRIVACY.md lists it with the other in-memory
+whom, and it never reaches disk. docs/PRIVACY.md lists it with the other in-memory
 structures rather than letting the document drift.
 
 `rpz-update.sh` expunges it after any successful blocklist reload, so a newly
@@ -782,10 +786,10 @@ is smaller than configured.
 
 Dynamic blocks are off (`dynblock_ring_entries = 0`). They need dnsdist's query
 ring, which pairs client IPs with query names, and at this resolver's traffic
-5,000 entries was hours of history, not seconds — see PRIVACY.md. The NXDOMAIN
+5,000 entries was hours of history, not seconds — see docs/PRIVACY.md. The NXDOMAIN
 rule that shared it never worked at all: rcode rules read the *response* ring, and
 responses are not recorded. A university or CGNAT range behind one address needs a
-different limit; see BACKLOG.md.
+different limit; see docs/BACKLOG.md.
 
 **DNS tunnelling is limited per query, and only at the extremes.** Tunnelling hides
 a data channel in query names and answers, aimed at an authoritative server the
@@ -868,6 +872,8 @@ node/               rsynced to /opt/galena, installed by bootstrap.sh
   nftables/         host firewall
   systemd/          journald privacy, RPZ timer, service hardening, certbot AWS env
   bin/              rpz-update.sh, acme-deploy-hook.sh, privacy-audit.sh
+docs/               PRIVACY.md (what is kept), ABUSE.md (reports, and the
+                    operator's procedure), BACKLOG.md (open work)
 scripts/            run from your machine: test-resolver.sh, make-mobileconfig.sh
 monitor/            the external prober, its systemd units and installer, for
                     the monitor host — never a node
@@ -970,7 +976,7 @@ curl -H "Authorization: Bearer $HCLOUD_TOKEN" https://api.hetzner.cloud/v1/prici
 
 ## Backlog
 
-Open work, and what each item blocks, is in [BACKLOG.md](BACKLOG.md). The short
+Open work, and what each item blocks, is in [docs/BACKLOG.md](docs/BACKLOG.md). The short
 version: alerting now exists (see "Monitoring"); what is left before anyone else is
 pointed at this is mostly decisions rather than code — rate limits for NATed
 groups, abuse handling, and the legal and data-controller questions.
