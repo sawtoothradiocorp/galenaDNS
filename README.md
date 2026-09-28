@@ -315,7 +315,7 @@ turns the same signals into an email, all through one SNS topic to `alert_email`
 | prober findings | a transport fails, DNSSEC stops validating, blocking stops, or a certificate is invalid or has under 21 days left (under 7 is a FAIL) | `monitor/galena-probe` on `monitor_host` |
 | `probe-heartbeat` | no passing probe run for 20 minutes | CloudWatch alarm on the prober's heartbeat metric |
 
-**The prober** runs every 5 minutes on `monitor_host` — mtbaldy — which is off-node,
+**The prober** runs every 5 minutes on `monitor_host` — a separate machine — which is off-node,
 always on, and already `admin_cidr`. It checks every node **by address**, never
 through the hostname, because Route 53 withholds an unhealthy node from DNS and a
 hostname-based check would quietly stop looking at it. Per node: DoT and DoH with
@@ -333,7 +333,7 @@ failure as new.
 datapoint to CloudWatch; `probe-heartbeat` fires after 20 minutes without one. That one
 alarm covers "the resolver is failing" *and* "the prober, its timer or its host is
 dead" — the second being the failure no monitor can report about itself. AWS
-evaluates it, so it does not depend on mtbaldy being alive.
+evaluates it, so it does not depend on the monitor host being alive.
 
 **The prober's key** can publish to that one topic and write that one metric
 namespace, and nothing else — no Route 53 at all. Terraform creates the IAM user but
@@ -376,7 +376,7 @@ makes that overlap possible.
 
 **What it does not cover.** Blocklist freshness — a feed that stopped updating still
 blocks yesterday's list, and checking it needs node access the prober does not have.
-IPv6 end to end: mtbaldy has no IPv6 route, so the prober checks IPv4 only, and IPv6
+IPv6 end to end: the monitor host has no IPv6 route, so the prober checks IPv4 only, and IPv6
 is covered by the Route 53 v6 health checks, which prove TCP and nothing more. And
 there is one vantage point: a failure that only affects some networks — UDP/QUIC
 through home NAT is the classic — is invisible from a datacenter. See docs/BACKLOG.md.
@@ -751,7 +751,7 @@ Two honest caveats the output states for itself:
   test first queries `192.0.2.1`, a reserved address that serves no DNS; if that
   "answers", the network is rewriting DNS and the port-53 result is meaningless.
   This caught a false "open resolver" FAIL from a VPN exit on 2026-09-27; the same
-  check from mtbaldy passed.
+  check from the monitor host passed.
 - **Neither `kdig` nor `dig` can speak DoH3.** kdig's `+https` is libnghttp2,
   which is HTTP/2 only; `dig` has no QUIC transport at all. Hence `dnslookup`.
   If it is missing, the DoH3 test SKIPs loudly instead of passing quietly.

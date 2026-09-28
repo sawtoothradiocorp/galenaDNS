@@ -176,9 +176,9 @@ variable "alert_email" {
 }
 
 variable "monitor_host" {
-  description = "SSH destination of the always-on machine that runs the external prober (monitor/). It must not be a resolver node: a monitor on the node cannot report the node down. Used by the monitor-* Makefile targets and in alarm text."
+  description = "SSH destination of the always-on machine that runs the external prober (monitor/). It must not be a resolver node: a monitor on the node cannot report the node down. Used by the monitor-* Makefile targets and in alarm text. Set it in terraform.tfvars; the default names no real host."
   type        = string
-  default     = "mtbaldy"
+  default     = "monitor-host"
 }
 
 variable "aws_region" {

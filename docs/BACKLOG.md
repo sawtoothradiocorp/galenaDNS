@@ -16,19 +16,18 @@ worse: a dead node is withdrawn, clients move to the survivor, and nothing anywh
 says a node died. README "Monitoring" describes what exists now:
 
 - a CloudWatch alarm on each of the four Route 53 health checks;
-- `monitor/galena-probe` on mtbaldy every 5 minutes, per node by address: all four
+- `monitor/galena-probe` on the monitor host every 5 minutes, per node by address: all four
   transports, DNSSEC both ways, blocking, and the certificate on both listeners,
   alerting under 21 days;
 - a heartbeat metric from every passing run, with an alarm when it stops — the
-  dead man's switch, evaluated by AWS so it survives mtbaldy dying.
+  dead man's switch, evaluated by AWS so it survives the monitor host dying.
 
 Everything goes through one SNS topic to `alert_email`, and costs nothing inside
-CloudWatch's always-free tier. Healthchecks.io and the Airflow instance on
-dollarmtn were both considered for the dead man's switch; CloudWatch won because
+CloudWatch's always-free tier. Healthchecks.io and an Airflow instance on a home server were both considered for the dead man's switch; CloudWatch won because
 it needs no new host, no cross-host SSH key and no third party beyond the one
 already holding the zone.
 
-Installed on mtbaldy on 2026-09-27: first run 14/14 OK, test alert published,
+Installed on the monitor host on 2026-09-27: first run 14/14 OK, test alert published,
 heartbeat in CloudWatch, the heartbeat alarm cleared to OK, all four node alarms OK.
 
 **Fire drill, 2026-09-27: passed.** dnsdist stopped on `hel1-a` for 6m11s while
@@ -60,8 +59,8 @@ was installed `0750 root:galena-probe`, so `make monitor-check` could not read
 | Gap | Why it matters | Shape of a fix |
 |---|---|---|
 | **Blocklist freshness** | A feed that stopped updating still blocks yesterday's list; nothing surfaces it. | Needs node access the prober lacks. Cheapest: `rpz-update.sh` publishes its own success metric, alarmed on absence — but that puts an AWS key on the nodes, which today hold only the TXT-only ACME key. Decide before building. |
-| **IPv6 end to end** | mtbaldy has no IPv6 route, so the prober checks IPv4 only. The v6 health checks prove TCP/853 and nothing more. | A v6-capable monitor host, or IPv6 on mtbaldy. |
-| **A second vantage point** | A failure that affects only some networks — UDP/QUIC through home NAT is the classic, and it is how DoQ and DoH3 fail for real users — is invisible from a datacenter. | The Airflow instance on dollarmtn, on a residential connection, running the same checks as a DAG. It lives in the separate `galena-smt` repo and currently has no alert channel configured. |
+| **IPv6 end to end** | The monitor host has no IPv6 route, so the prober checks IPv4 only. The v6 health checks prove TCP/853 and nothing more. | A v6-capable monitor host, or IPv6 on the current one. |
+| **A second vantage point** | A failure that affects only some networks — UDP/QUIC through home NAT is the classic, and it is how DoQ and DoH3 fail for real users — is invisible from a datacenter. | An existing scheduler (Airflow) on a home server with a residential connection, running the same checks as a DAG. It currently has no alert channel configured. |
 
 ---
 
@@ -306,7 +305,7 @@ Not code. All of it blocks "lightly advertised", none of it blocks personal use.
   and 4.1 s. The last is the documented `setTCPRecvTimeout` default of 2 s and is
   normal — clients reconnect when they next need to. The first two are not: the
   connection was busy, `setMaxTCPConnectionDuration` is 600, and nothing in the
-  config or the docs gives ~10 s. Same from mtbaldy, so it is server-side; same
+  config or the docs gives ~10 s. Same from the monitor host, so it is server-side; same
   with 1 connection or 40, so it is not the per-client cap. Cost if real: a busy
   client reconnects every ~10 s, with TLS session resumption softening each
   reconnect. To do: reproduce against a stock dnsdist with only `addTLSLocal`,

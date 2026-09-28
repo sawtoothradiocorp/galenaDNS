@@ -444,7 +444,7 @@ fi
 #
 # One attempt is not enough: on 2026-09-27 the same network answered 192.0.2.1
 # five times out of five, but a single control query in one run went unanswered,
-# and that run FAILed fsn1-a as an open resolver while mtbaldy saw its port 53
+# and that run FAILed fsn1-a as an open resolver while the monitor host saw its port 53
 # closed. So: up to three tries up front, and again the moment a node appears to
 # answer — a FAIL needs the node answering AND the dead address staying silent.
 network_intercepts() {
