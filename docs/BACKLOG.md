@@ -72,9 +72,9 @@ primary IPv4) plus $1.50/month for its two health checks. See README "Costs".
 
 **hel1 rather than nbg1**, because fsn1 and nbg1 are both in Germany — one legal
 system, one national grid, one country's network — while hel1 is in Finland at the
-same price and in the same `eu-central` network zone. Given the German
-resolver-liability precedent in section 3, that was the one axis of diversity worth
-buying. The caveat stands: Hetzner Online GmbH is German either way, so this
+same price and in the same `eu-central` network zone. That was chosen while the
+German Sony v. Quad9 liability ruling stood; Quad9 has since won on appeal (section
+3), but two legal systems remain a better position than one. The caveat stands: Hetzner Online GmbH is German either way, so this
 diversifies the *server*, not the *operator*; full diversity means a second
 provider. US locations are a different and far more expensive product line — no
 `cx*` type exists in `ash` or `hil`, and the cheapest 4 GB option is `cpx21` at
@@ -148,8 +148,12 @@ Not code. All of it blocks "lightly advertised", none of it blocks personal use.
     anything Hetzner publishes. The classic objection — an open resolver on 53 as
     an amplifier — does not apply, since 53 is closed, but ask their support before
     advertising rather than learn it from a lock.
-  - **The 24-hour acknowledgement target** in ABUSE.md is a commitment; keep it
-    only if someone will actually read abuse@ that often.
+  - ~~The 24-hour acknowledgement target~~ — kept: abuse@ is monitored
+    (confirmed 2026-09-27). What decides whether complaints are met in time is
+    mostly elsewhere, though: whois for the nodes' addresses names Hetzner's abuse
+    desk, not ours, so most reports will arrive *forwarded by Hetzner*, to the
+    Hetzner account's email, on Hetzner's deadline. **Confirm that address is
+    monitored as closely as abuse@.**
 - **DNS tunnelling — inline limits in place, 2026-09-27.** Names over 220 bytes and
   NULL/65399 queries are REFUSED, judged one query at a time and never recorded
   (README "Design choices"). That stops the common tools at their defaults and
@@ -166,11 +170,29 @@ Not code. All of it blocks "lightly advertised", none of it blocks personal use.
   engineering: the **lawful basis** relied on; whether a US-based controller
   serving people in the EU needs an **Article 27 representative** there. Privacy
   requests now go to their own address, dataprotection@ — see below.
-- **Legal reading, specific to German hosting.** Sony sued Quad9 in Germany over
-  resolving a piracy site and Quad9 lost at first instance — a resolver held liable
-  for what it resolves, not for hosting anything. There were appeals; check the
-  current status rather than trusting a summary. This is the most underappreciated
-  risk of running a public blocking resolver in the EU.
+- **Legal exposure — liability settled, blocking orders live.**
+  - *Liability, Germany: resolved in the resolver's favour.* Sony won injunctions
+    against Quad9 in Hamburg and Leipzig, holding a resolver liable for what it
+    resolves; the Higher Regional Court in Dresden reversed that in December 2023,
+    holding a resolver a neutral intermediary, and said the decision was final.
+    ([TorrentFreak](https://torrentfreak.com/dns-resolver-quad9-wins-pirate-site-blocking-appeal-against-sony-231208/),
+    [Quad9](https://quad9.net/news/blog/quad9-turns-the-sony-case-around-in-dresden/))
+  - *Blocking orders: the live risk, and a different kind.* Not "you are liable",
+    but "you must stop resolving these names". Since 2024 Paris courts have ordered
+    the public resolvers of Google, Cloudflare and Cisco — then Quad9 and the EU's
+    own DNS4EU — to block pirate sports-streaming domains, and a Belgian order on
+    the same model was upheld, backed by fines of up to €100,000 a day.
+    ([CircleID](https://circleid.com/posts/20240618-french-court-orders-google-cloudflare-cisco-to-poison-dns-in-anti-piracy-crackdown),
+    [TorrentFreak](https://torrentfreak.com/eu-funded-dns-provider-must-block-pirate-sites-french-court-rules/),
+    [TorrentFreak](https://torrentfreak.com/court-upholds-belgian-pirate-dns-blocking-order-opendns-exit-looms/))
+  - *What that means here.* Some such blocks reach users anyway, through Quad9.
+    A small, unadvertised resolver is an unlikely direct target; advertised in
+    France or Belgium, less so. Complying would need a way to block a named list
+    of domains, first in the RPZ order and out of the allowlist's reach, quickly —
+    **which does not exist yet**. The allowlist zone is the only local zone today.
+    Worth building before advertising: a small `legal` zone, versioned in this
+    repo, whose history is itself the record of what was blocked and why. Whether
+    to publish that list is a transparency decision for the operator.
 - **No-SLA and sunset — written, 2026-09-27: [TERMS.md](TERMS.md).** No service
   level, provided as is, acceptable use, and at least 90 days' notice before a
   permanent shutdown, with the service unchanged throughout. Its central
@@ -179,19 +201,21 @@ Not code. All of it blocks "lightly advertised", none of it blocks personal use.
   closed instead of one day sending their DNS to whoever registers a lapsed name.
 - **Before any of the docs above are published** — each is a promise the docs
   already make, so it has to be true first:
-  - **Create `dataprotection@swthrc.com`.** PRIVACY.md sends data requests there.
-    Deliberately not `privacy@`, which receives Privacy.com account mail — a GDPR
-    request has a one-month response deadline and must not be buried in vendor
-    notices.
-  - **Somewhere public to post notices.** TERMS.md promises a 90-day shutdown notice
-    "where the service is described", and there is no such page yet: the nodes
-    serve only `/dns-query`, and this repository is not public.
-  - **Keep `swthrc.com` from lapsing**: auto-renew with a payment method that will
-    not expire unnoticed, and a registrar lock. The hostname commitment is only as
-    good as the renewal.
-  - **Legal review of TERMS.md** — the warranty and liability wording, and whether
-    to name a governing law and venue, which it deliberately does not do yet —
-    alongside the GDPR items above.
+  - ~~Create `dataprotection@swthrc.com`~~ — done 2026-09-27. Deliberately not
+    `privacy@`, which receives Privacy.com account mail.
+  - **Publish the notice page** at <https://sawtoothradiocorp.com/galena-dns>, the
+    location TERMS.md now names for the 90-day notice. It returned HTTP 403 on
+    2026-09-27. It is also where people will look for a contact, so it should carry
+    abuse@ and dataprotection@ and link these documents.
+  - **`swthrc.com` from lapsing**: auto-renew verified on (Route 53 Domains,
+    expiry 2027-08-01). **The transfer lock is off** — whois shows status `ok`,
+    not `clientTransferProhibited` — so the name can be moved away through a
+    compromised account or a social-engineered registrar request. Turn it on:
+    `aws route53domains enable-domain-transfer-lock --domain-name swthrc.com
+    --region us-east-1`.
+  - **Legal review of TERMS.md** — being scheduled. The warranty and liability
+    wording, whether to name a governing law and venue (deliberately absent), the
+    GDPR items above, and the blocking-order question below.
 
 ---
 

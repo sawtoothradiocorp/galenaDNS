@@ -94,8 +94,9 @@ During those 90 days:
 - **It keeps running as it does now**, with the same privacy properties. Nothing is
   added to the service to wind it down — no logging, no redirection, no changed
   upstream.
-- **The notice stays up** where the service is described, so anyone setting it up
-  during that time sees it first.
+- **The notice stays up** at
+  [sawtoothradiocorp.com/galena-dns](https://sawtoothradiocorp.com/galena-dns), so
+  anyone setting the service up during that time sees it first.
 
 On the shutdown date:
 
