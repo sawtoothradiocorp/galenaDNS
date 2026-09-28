@@ -440,6 +440,14 @@ resolved moves to the next server when the current one fails. Addresses as of
 hostname `base.dns.swthrc.com`. How many servers a router accepts, and whether it
 fails over between them rather than only using the first, varies by firmware.
 
+**Check it's working.** On the configured device or browser, open
+[browserleaks.com/dns](https://browserleaks.com/dns). Every server it lists should
+be **Quad9's** — typically i3D in Frankfurt, FUNET/CSC in Finland, E-MAX in Slovakia
+— because Quad9 resolves on the nodes' behalf and a leak test shows whoever finally
+queries the authoritative servers. The nodes' own addresses never appear, and should
+not. Your ISP's resolvers mean the setting is not active there; a browser's own
+secure-DNS setting covers only that browser.
+
 **These addresses survive a node being replaced.** They are Hetzner Primary IPs
 managed in `terraform/primary_ips.tf` with `auto_delete = false`, so a rebuilt server
 comes back on the same ones. They are also **delete-protected**
@@ -915,7 +923,8 @@ monitor/            the external prober, its systemd units and installer, for
 | `bootstrap.sh` aborts on QUIC support | apt resolved dnsdist from Debian — check `apt-cache policy dnsdist` |
 | DoT/DoH work, DoQ/DoH3 hang for some users | ICMP being dropped upstream of the node, breaking path MTU discovery |
 | Everything resolves but nothing is blocked | Check `make audit` section 4; a feed may have failed validation |
-| A DNS leak test shows your provider's resolvers | `unbound-resolvconf` has replaced the configured upstream with the provider's cleartext resolvers. `unbound-control list_forwards` should show only `forward_tls_upstreams`; `make audit` section 3 checks that and that the service is masked |
+| [browserleaks.com/dns](https://browserleaks.com/dns) shows your **own ISP's** resolvers | The device or browser is not using the resolver: the setting is off, not saved, or set in a different browser than the one tested. Nothing on the nodes is wrong |
+| A DNS leak test shows the **hosting provider's** resolvers (Hetzner, `185.12.64.x`) | `unbound-resolvconf` has replaced the configured upstream with the provider's cleartext resolvers. `unbound-control list_forwards` should show only `forward_tls_upstreams`; `make audit` section 3 checks that and that the service is masked |
 | Allowlist entries ignored | The allowlist zone is not first — `make audit` checks this |
 | TLS handshake fails after ~60 days | The deploy hook is not running; `certbot renew --dry-run` |
 | unbound OOMs or restarts | Lower `unbound_msg_cache_size`/`unbound_rrset_cache_size`, or use a larger server type. `make audit` section 11 reports RSS |
