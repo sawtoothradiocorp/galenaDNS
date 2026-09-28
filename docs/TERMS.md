@@ -25,8 +25,8 @@ company, not a network operations centre.
 one, chosen so that your queries never silently go somewhere else — which also
 means an outage is felt:
 
-- **Android Private DNS, the iOS/macOS profiles, Windows and systemd-resolved** have
-  no fallback. If the resolver is unreachable, nothing resolves and the device looks
+- **Android Private DNS, the iOS/macOS profiles, Windows, systemd-resolved, a router
+  in Strict DoT mode and unbound with `forward-first: no`** have no fallback. If the resolver is unreachable, nothing resolves and the device looks
   offline.
 - **Firefox on Max Protection** shows an error page offering to use your normal DNS
   instead; **Chrome and Edge with a custom provider** simply fail to load pages.
@@ -80,7 +80,9 @@ The operator may change the service at any time — blocklists, limits, location
 the upstream resolver, supported protocols — and may change these terms. The
 current terms are the ones in this document; its history records every change.
 Changes that affect what is kept about you are made in PRIVACY.md first, and never
-silently.
+silently by the operator's choice. The one case that could override that is a
+lawful order that forbids saying so — PRIVACY.md is candid about it under "Legal
+compulsion".
 
 ---
 

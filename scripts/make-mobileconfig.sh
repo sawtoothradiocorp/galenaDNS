@@ -160,8 +160,8 @@ Install: AirDrop or email the file to the device, open it, then
   iOS     Settings > General > VPN, DNS & Device Management > the profile > Install
   macOS   System Settings > General > Device Management > the profile > Install
 
-Settings will say "Unverified" because the profile is not signed with an Apple
-developer certificate. That is about the profile file, not the DNS connection —
+Settings will say "Unverified" because the profile is not signed. That is about
+the profile file, not the DNS connection —
 the OS still validates ${DOMAIN}'s certificate on every query.
 
 Only one DNS profile can be active at a time; installing the other replaces it.

@@ -76,5 +76,8 @@ nodes = {
 # docs/PRIVACY.md first: this hands the hosting provider every query name in cleartext.
 # forward_tls_upstreams = []
 
-# max_qps_per_ip = 40
+# Per-address limit, sized for a household or small office of up to 50 devices
+# behind one address. See README "Design choices" before changing it.
+# max_qps_per_ip       = 50
+# max_qps_burst_per_ip = 500
 # enable_localhost_metrics = false

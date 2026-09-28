@@ -203,8 +203,9 @@ Two further consequences, which apply to blocking wherever it happens:
   hypervisor. They see every client IP that connects, with timing and volume — the
   very data this resolver refuses to retain — and the TLS SNI, which names the
   resolver. They do not see query names, because upstream traffic is encrypted.
-  They can image the running VM, memory included, which would expose the dnsdist
-  ring buffer, unbound's cache, and the TLS private key. No configuration inside
+  They can image the running VM, memory included, which would expose the queries
+  being handled at that instant, the client addresses in the rate counters, both
+  caches, and the TLS private key. No configuration inside
   the VM changes any of this. If your threat model includes the hosting provider,
   this resolver is not the answer.
 

@@ -197,8 +197,19 @@ end
 -- Runs before the packet cache, so cached answers count too.
 addAction(MaxQPSIPRule(${GALENA_MAX_QPS_PER_IP}, 32, 64, ${GALENA_MAX_QPS_BURST_PER_IP}), DropAction())
 
--- A public resolver is a reflection-attack amplifier if left open on TCP too.
-setMaxTCPConnectionsPerClient(20)
+-- Connection caps: resource protection, so one address cannot hold thousands of
+-- connections open. (They have nothing to do with reflection — TCP and QUIC
+-- cannot be used to reflect; port 53 being closed is what handles that.)
+--
+-- Per-client means per ADDRESS, and since dnsdist 2.0.4 it counts TCP *and* QUIC,
+-- so DoT, DoH, DoQ and DoH3 share one budget. It was 20, which quietly broke the
+-- household sizing everywhere else: behind one IPv4 address, 50 devices each
+-- holding a Private DNS (DoT) connection — and browsers holding HTTP/2 and HTTP/3
+-- ones besides — need well over 20, and connections past the cap are refused.
+-- 200 is about four per device for 50 devices. IPv6 rarely comes near it, since
+-- devices there usually have addresses of their own. Found 2026-09-28 in a
+-- consistency pass over the docs.
+setMaxTCPConnectionsPerClient(200)
 setMaxTCPQueriesPerConnection(1000)
 setMaxTCPConnectionDuration(600)
 

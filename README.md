@@ -404,8 +404,8 @@ and AirDrop or email one over. Then install it:
 - iOS: Settings ▸ General ▸ VPN, DNS & Device Management
 - macOS: System Settings ▸ General ▸ Device Management
 
-Settings will label them "Unverified" because they are not signed with an Apple
-developer certificate. That concerns the profile file, not the DNS connection —
+Settings will label them "Unverified" because they are not signed (signing them is
+planned — docs/BACKLOG.md). That concerns the profile file, not the DNS connection —
 the OS still validates your certificate on every query. Only one DNS profile can
 be active at a time, so installing one replaces the other.
 
@@ -733,7 +733,9 @@ argument. Until 2026-09-27 it was not, and DoH3 was checked on whichever node DN
 happened to return. On each it checks all four
 transports, DNSSEC (a bogus signature must SERVFAIL and a good
 one must set the AD bit), a known ad domain, malware domains **sampled live from
-the deployed feeds**, the allowlist, and that port 53 is closed.
+the deployed feeds**, the allowlist, the tunnelling limits (a name of exactly 220
+bytes answered, 221 refused; NULL and 65399 refused, TXT answered), and that port
+53 is closed. With `--include-ratelimit` it also brackets the per-address burst.
 
 Malware fixtures are sampled rather than pinned because individual malware domains
 get delisted within weeks, so a hardcoded one becomes a scheduled false failure.
@@ -864,6 +866,12 @@ lost with the connection (600 at once against burst 500 returned 17). `make test
 ARGS=--include-ratelimit` brackets the burst from a non-exempt address — 90% of it
 must be answered in full, 120% must be cut off — and fails when the effective burst
 is smaller than configured.
+
+The same household also needs **connections**, not just queries: each phone's
+Private DNS holds a DoT connection, and browsers hold DoH ones. dnsdist caps
+connections per address across TCP *and* QUIC — all four transports share it — and
+the cap was 20, which quietly contradicted the 50-device sizing until 2026-09-28.
+It is now 200, about four per device.
 
 Dynamic blocks are off (`dynblock_ring_entries = 0`). They need dnsdist's query
 ring, which pairs client IPs with query names, and at this resolver's traffic
