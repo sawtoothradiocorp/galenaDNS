@@ -772,8 +772,12 @@ arithmetic is in `terraform/variables.tf`. Until then the burst was unset, so
 dnsdist defaulted it to the rate: 40 at once, then drops. Measured against that:
 a 300-query household burst got 40 answers and then **dnsdist closed the DoT
 connection** — which is what a drop does on DoT, and why the burst matters more
-than the rate. `make test ARGS=--include-ratelimit` now checks both sides from a
-non-exempt address.
+than the rate. The close is also abrupt: dnsdist reaches the first drop within
+milliseconds of a pipelined batch arriving, so answers still being written are
+lost with the connection (600 at once against burst 500 returned 17). `make test
+ARGS=--include-ratelimit` brackets the burst from a non-exempt address — 90% of it
+must be answered in full, 120% must be cut off — and fails when the effective burst
+is smaller than configured.
 
 Dynamic blocks are off (`dynblock_ring_entries = 0`). They need dnsdist's query
 ring, which pairs client IPs with query names, and at this resolver's traffic

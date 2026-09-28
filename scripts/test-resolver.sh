@@ -50,10 +50,10 @@ Usage: $0 --domain <fqdn> [--ip <addr>] [options]
                         the upstream and an unfiltered control; pass this to pin it.
   --allowlist FILE      Allowlist RPZ zone to read a test domain from.
                         Defaults to node/unbound/rpz/allowlist.rpz.
-  --include-ratelimit   Also test rate limiting: a household burst that must be
-                        answered in full, then a flood that must be cut to the
-                        configured burst + rate. If dynamic blocks are on, the
-                        flood can get your address blocked for their duration.
+  --include-ratelimit   Also test rate limiting: 90% of the configured burst sent
+                        at once must be answered in full, and 120% must be cut
+                        off. Run it from an address that is not exempt. If
+                        dynamic blocks are on, it can get you blocked briefly.
   --rate QPS/BURST      The configured limit to check against (default 50/500).
                         `make test` passes the deployed values.
   --insecure            Skip certificate validation (for acme_staging = true).
@@ -437,27 +437,36 @@ else
   # (RFC 7766) and counts answers by DNS ID, which is the only way to put a known
   # number of queries in front of dnsdist within a fraction of a second.
   #
-  # Two phases, matching the token bucket MaxQPSIPRule implements:
-  #   1. household — 300 queries at once must ALL be answered, on a connection
-  #      that stays open (under the burst);
-  #   2. after a pause long enough to refill the bucket, a flood of 900 must be
-  #      cut off, having answered no more than burst + qps x elapsed.
+  # Two phases that bracket the token bucket MaxQPSIPRule implements:
+  #   1. 90% of the configured burst at once must ALL be answered, on a
+  #      connection that stays open;
+  #   2. after a pause long enough to refill the bucket, 120% of it must be cut
+  #      off.
+  # Together they prove the bucket is the configured size, not merely that some
+  # limit exists. At the household default (burst 500) that is 450 and 600 —
+  # and 450 at once is well past a 50-device household's real peak.
   #
-  # Why no lower bound on phase 2: on DoT, dnsdist answers a dropped query by
-  # CLOSING THE CONNECTION, and answers already in flight die with it. Measured
-  # 2026-09-27 against a 40/40 limit: phase 1 got exactly 40 before the close,
-  # but phase 2 got only 10 of a refilled 40. Counting answers on a connection
-  # that was closed under them is a lower bound on nothing.
+  # Why the count in phase 2 is not checked: on DoT, dnsdist answers a dropped
+  # query by CLOSING THE CONNECTION, and answers already in flight die with it.
+  # dnsdist evaluates a pipelined batch within milliseconds, so it reaches the
+  # first drop — query burst+1 — before most earlier answers are written.
+  # Measured 2026-09-27 at burst 500: 450 at once came back 450/450 and open;
+  # 600 came back 17 and reset; 900 from an exempt address came back 900/900.
   # 900 stays under setMaxTCPQueriesPerConnection(1000), so every missing answer
   # is a rate-limit drop and not dnsdist closing the connection. Every query is
   # for $CONTROL, served from the packet cache: no load reaches the upstream.
   # Long enough for an emptied bucket to refill completely, plus margin.
   RL_PAUSE=$(( RL_BURST / RL_QPS + 2 ))
-  printf '       %shousehold burst of 300, then a flood of 900 after a %ss refill pause;\n' "$D" "$RL_PAUSE"
+  RL_UNDER=$(( RL_BURST * 9 / 10 ))
+  RL_OVER=$(( RL_BURST * 12 / 10 ))
+  # One connection carries at most setMaxTCPQueriesPerConnection(1000).
+  ((RL_OVER > 990)) && RL_OVER=990
+  printf '       %s%s queries at once (90%% of the burst), then %s after a %ss refill pause;\n' "$D" "$RL_UNDER" "$RL_OVER" "$RL_PAUSE"
   printf '       an address in rate_limit_exempt_cidrs (default: admin_cidr) sees no drops.%s\n' "$N"
-  read -r h_sent h_ans f_sent f_ans elapsed h_closed f_closed < <(python3 - "$TARGET" "$DOMAIN" "$CONTROL" "$INSECURE" "$RL_PAUSE" <<'PY'
+  read -r h_sent h_ans f_sent f_ans elapsed h_closed f_closed < <(python3 - "$TARGET" "$DOMAIN" "$CONTROL" "$INSECURE" "$RL_PAUSE" "$RL_UNDER" "$RL_OVER" <<'PY'
 import select, socket, ssl, struct, sys, time
 target, domain, name, insecure, pause = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4] == "1", int(sys.argv[5])
+under, over = int(sys.argv[6]), int(sys.argv[7])
 
 def conn():
     ctx = ssl.create_default_context()
@@ -501,27 +510,27 @@ def phase(n, wait=4.0):
     s.close()
     return len(seen), last - t0, closed
 
-h_ans, _, h_closed = phase(300)
+h_ans, _, h_closed = phase(under)
 time.sleep(pause)
-f_ans, el, f_closed = phase(900)
-print(300, h_ans, 900, f_ans, f"{el:.1f}", h_closed, f_closed)
+f_ans, el, f_closed = phase(over)
+print(under, h_ans, over, f_ans, f"{el:.1f}", h_closed, f_closed)
 PY
   )
   if [[ -z ${h_sent:-} ]]; then
     fail "rate limiting" "the test harness could not connect over DoT"
   else
     expect_max=$(( RL_BURST + RL_QPS * ${elapsed%.*} + RL_QPS + 50 ))
-    if ((h_ans == h_sent)); then
-      pass "household burst answered in full" "${h_ans}/${h_sent} at once (burst allowance ${RL_BURST})"
+    if ((h_ans == h_sent && h_closed == 0)); then
+      pass "burst allowance holds" "${h_ans}/${h_sent} at once, connection kept (burst ${RL_BURST})"
     else
-      fail "household burst answered in full" "only ${h_ans}/${h_sent}$( ((h_closed)) && echo ', then dnsdist closed the connection') — the burst allowance is too small for a busy household"
+      fail "burst allowance holds" "only ${h_ans}/${h_sent}$( ((h_closed)) && echo ', then dnsdist closed the connection') — the effective burst is below the configured ${RL_BURST}"
     fi
-    if ((f_ans == f_sent)); then
-      fail "rate limiting engages" "all ${f_sent} flood queries answered — is this address exempt, or the limit too high?"
+    if ((f_ans == f_sent && f_closed == 0)); then
+      fail "limit engages above the burst" "all ${f_sent} answered — is this address exempt, or the burst above ${RL_BURST}?"
     elif ((f_ans > expect_max)); then
-      fail "rate limiting engages" "${f_ans}/${f_sent} answered in ${elapsed}s — more than burst ${RL_BURST} + ${RL_QPS}/s allows"
+      fail "limit engages above the burst" "${f_ans}/${f_sent} answered in ${elapsed}s — more than burst ${RL_BURST} + ${RL_QPS}/s allows"
     else
-      pass "rate limiting engages" "${f_ans}/${f_sent} answered before the cut-off$( ((f_closed)) && echo ' (connection closed)'), within burst ${RL_BURST} + ${RL_QPS}/s"
+      pass "limit engages above the burst" "${f_sent} at once cut off$( ((f_closed)) && echo ' — DoT connection closed, as dnsdist does on a drop')"
     fi
   fi
 fi

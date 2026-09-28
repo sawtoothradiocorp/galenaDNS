@@ -395,11 +395,11 @@ if [[ -r $dconf ]]; then
     pass "dnsdist records no queries or responses" "ring off: no client IP is ever recorded with a query name"
   elif grep -q 'recordResponses = false' "$dconf"; then
     pass "dnsdist ring records no responses" "ring=${ring} queries, responses off"
+    note "the ring is the only place CLIENT IPs and qnames appear together, in RAM only"
     note "a ${ring}-entry ring is a COUNT, not a time: at low traffic it holds hours of client IPs + names"
   else
     warn "dnsdist ring records no responses" "recordResponses is not explicitly false"
   fi
-  note "the ring is the only place CLIENT IPs and qnames appear together, in RAM only"
 
   # The packet cache also holds responses in RAM, but keyed by question rather
   # than by client, so it cannot attribute anything to anyone. Saying "no
