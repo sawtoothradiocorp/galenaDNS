@@ -356,6 +356,34 @@ Not code. All of it blocks "lightly advertised", none of it blocks personal use.
 
 ## 4. Smaller, measured, not urgent
 
+- **Pad answers back to the client — when dnsdist 2.2.0 is stable.** An encrypted
+  answer still has a size. A blocked name comes back as a few dozen bytes and a
+  normal answer is larger, and the set of sizes in one page load is enough to
+  guess many popular sites. Rounding every answer up to one of a few lengths
+  blunts that. The server cannot change the size of the query the client already
+  sent, and it cannot hide how many lookups a page makes or when.
+
+  Queries toward Quad9 are already padded. unbound's default `pad-queries: yes`
+  (block size 128) is live on both nodes, checked 2026-09-28, so the name's
+  length does not show on that uplink. `pad-responses` is on too and does nothing
+  for clients: unbound only pads answers to queries it received over TLS, and
+  dnsdist has already unwrapped those onto plain DNS on loopback.
+
+  The padding belongs in dnsdist, on the way back to the client. `padResponses`
+  does it for DoT, DoH, DoQ and DoH3, rounding every response to a multiple of
+  468 bytes (RFC 8467), including answers the client did not ask to have padded.
+  It is a 2.2 feature. As of 2026-09-28 the newest stable package is 2.1.2, which
+  is what the nodes run (`trixie-dnsdist-21`); 2.2.0 exists only as an alpha.
+  Rewriting the EDNS OPT record in Lua on 2.1 would be the same feature,
+  maintained here, on the path every answer takes.
+
+  **Done:** repo.powerdns.com is publishing a stable 2.2 — a release, not an
+  alpha or a release candidate. Point `node/bootstrap.sh` at `dnsdist-22`, set
+  `padResponses = true` on all four listener families in
+  `node/dnsdist/dnsdist.conf.tmpl`, and confirm with `kdig` that an ordinary
+  answer and a blocked name both come back at a multiple of 468 bytes, on a
+  cache hit as well as a miss.
+
 - **Rate limiting — tested for real, 2026-09-27.** The old test could never have
   found a limit: 200 sequential kdig calls, each a new TLS handshake, run well under
   10 q/s from far away. It now pipelines queries over one DoT connection. Against
