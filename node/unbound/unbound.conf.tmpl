@@ -100,6 +100,21 @@ server:
     qname-minimisation-strict: no
     use-caps-for-id: no
 
+    # Pad queries sent over TLS up to a multiple of 128 bytes (RFC 8467), so a
+    # name's exact length does not show on the way to the upstream. Cleartext
+    # recursion is not padded: this applies only to TLS upstreams. Asserted by
+    # privacy-audit.sh, including on the packets.
+    pad-queries: yes
+    pad-queries-block-size: 128
+
+    # On, and useless to clients. unbound pads an answer only when the query
+    # arrived over TLS and already carried a padding option. dnsdist unwraps
+    # clients onto plain DNS on loopback, so this never fires for them.
+    # Padding the answers back out belongs in dnsdist (see docs/BACKLOG.md).
+    # The audit checks that client answers are in fact not padded.
+    pad-responses: yes
+    pad-responses-block-size: 468
+
     # ---------------------------------------------------------------------
     # Performance. Cache sizes are set deliberately rather than left at the
     # defaults. They were sized when the medium malware feed alone claimed

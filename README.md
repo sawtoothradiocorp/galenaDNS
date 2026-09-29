@@ -706,10 +706,11 @@ FAIL:
 2. **Logging** — journald `Storage=volatile`; no `/var/log/journal`; rsyslog,
    syslog-ng, auditd and sysstat not installed; no `log` statement in nftables.
 3. **unbound runtime and resolution posture** — queries the *running* daemon via
-   `unbound-control get_option` for all 14 privacy settings, so a config edited
-   but never reloaded cannot pass. Confirms ECS is not loaded and not echoed to
-   clients. Then asserts the posture that is actually configured, in either
-   direction:
+   `unbound-control get_option` for all 18 settings (the 14 logging and
+   identity ones, plus `pad-queries`, its block size, and the response-padding
+   options), so a config edited but never reloaded cannot pass. Confirms ECS is
+   not loaded and not echoed to clients. Then asserts the posture that is
+   actually configured, in either direction:
    - forwarding: the running forward zone matches `forward_tls_upstreams`, the
      transport is TLS, every upstream carries a `#tls-auth-name` so the
      certificate is verified rather than opportunistic, `forward-first: no` so an
@@ -722,6 +723,14 @@ FAIL:
    deliberate TLS upstream with the provider's cleartext resolvers just as readily
    as it would break recursion. These checks exist because the audit once passed
    46/46 while the resolver was silently forwarding in cleartext to the provider.
+
+   Padding is checked on the packets, not only the options. A DoT query that
+   carries a padding option and one that does not must both come back without
+   one: `pad-responses` is on and does not apply once dnsdist has unwrapped the
+   client onto loopback. While forwarding, a short name and a name 48 bytes
+   longer must leave toward the upstream at the same size, or a multiple of the
+   128-byte block apart. A gap the size of that extra label means `pad-queries`
+   is not actually padding.
 4. **Policy zones** — every zone has `rpz-log: no`, and the allowlist is first.
    Reports per-zone record counts and file sizes.
 5. **dnsdist** — config is free of every logging and remote-logging directive;
@@ -812,6 +821,11 @@ asked what alone. Three things fall out of it: this node becomes a mixer, so use
 are more private against Quad9 than they would be querying Quad9 directly; a warm
 anycast cache usually answers faster than a cold recursion chain; and the 1.75M
 entry malware feed could move off the box, which is what freed the RAM for cache.
+
+Ciphertext still has a length. Answers back to the client are not rounded, and
+the sizes in one page load are enough to guess many popular sites. Queries toward
+Quad9 are padded. The precise version is in docs/PRIVACY.md, under what this
+resolver cannot promise.
 
 What it costs is independence. Quad9's blocking policy applies and the allowlist
 cannot override it. DNSSEC is still validated *here*, so the upstream is trusted to

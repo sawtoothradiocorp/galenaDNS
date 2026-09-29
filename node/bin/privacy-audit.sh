@@ -149,6 +149,12 @@ if unbound-control status >/dev/null 2>&1; then
   check_opt aggressive-nsec yes
   check_opt hide-identity yes
   check_opt hide-version yes
+  check_opt pad-queries yes
+  check_opt pad-queries-block-size 128
+  # pad-responses does not pad answers to clients. The packet check at the end
+  # of this section is what proves that; these two only pin the setting.
+  check_opt pad-responses yes
+  check_opt pad-responses-block-size 468
 else
   fail "unbound-control is reachable" "unbound is not running or the socket is missing"
 fi
@@ -311,6 +317,127 @@ case $rcstate in
   *"No such file"* | *"not found"*) pass "unbound-resolvconf is masked" "unit not present" ;;
   *) fail "unbound-resolvconf is masked" "state is '${rcstate}' — it will re-add forwarders on the next resolvconf update" ;;
 esac
+
+# --- Packet padding ----------------------------------------------------------
+# The options above are what unbound intends. These look at the packets.
+#
+# Answers toward the client are not padded. unbound pads a response only for a
+# query it received over TLS that already carried a padding option, and dnsdist
+# has unwrapped the client onto plain DNS on loopback before unbound sees it.
+# kdig pads a TLS query unless told not to, so both are asked explicitly.
+# Measured against this resolver on 2026-09-28: example.com came back 72 bytes
+# and a blocked name 50, with no padding option either way.
+#
+# Queries toward a TLS upstream are padded to a multiple of 128 bytes. A short
+# name and one with 48 extra bytes in the same label both sit inside that
+# block (the longer message is still under 128, with room for a few extra EDNS
+# options), so they must leave as the same size. A gap of about 48 bytes means
+# the padding is not happening. Two sizes a multiple of 128 apart means they
+# fell in neighbouring blocks, which is still padding. Cleartext recursion is
+# not padded; pad-queries applies only to TLS upstreams.
+
+kdig_answer() {
+  local out sz st
+  if ! out=$(kdig +tls +timeout=5 "$@" 2>&1); then
+    echo "ERR kdig-failed"
+    return
+  fi
+  if ! grep -q '->>HEADER<<-' <<<"$out"; then
+    echo "ERR no-response"
+    return
+  fi
+  sz=$(grep -oE 'Received [0-9]+' <<<"$out" | head -1 | awk '{print $2}')
+  st=$(grep -oE 'status: [A-Z0-9]+' <<<"$out" | head -1 | awk '{print $2}')
+  if grep -qE '^;; PADDING:' <<<"$out"; then
+    echo "PAD ${sz:-?} ${st:-?}"
+  else
+    echo "CLEAR ${sz:-?} ${st:-?}"
+  fi
+}
+
+expect_clear() {
+  local label=$1 got=$2 kind rest
+  kind=${got%% *}
+  rest=${got#* }
+  case $kind in
+    CLEAR) pass "DoT answer omits padding (${label})" "$rest" ;;
+    PAD) fail "DoT answer omits padding (${label})" "answer carries EDNS padding (${rest})" ;;
+    *) fail "DoT answer omits padding (${label})" "${got#ERR }" ;;
+  esac
+}
+
+if ! command -v kdig >/dev/null 2>&1; then
+  fail "client answers are not padded" "kdig is not installed (knot-dnsutils)"
+else
+  sent=$(kdig_answer +padding @127.0.0.1 example.com A)
+  bare=$(kdig_answer +nopadding @127.0.0.1 example.com A)
+  blocked=$(kdig_answer +nopadding @127.0.0.1 scorecardresearch.com A)
+  expect_clear "client sent it" "$sent"
+  expect_clear "client did not" "$bare"
+  if [[ $sent == CLEAR* || $sent == PAD* ]] && [[ $blocked == CLEAR* || $blocked == PAD* ]]; then
+    note "answer sizes on the wire: example.com ${sent#* } ; scorecardresearch.com ${blocked#* }"
+  fi
+fi
+
+if [[ -z ${upstreams:-} ]]; then
+  note "not forwarding over TLS, so there are no upstream packets for pad-queries to pad"
+elif ! grep -qE '^[[:space:]]*forward-tls-upstream:[[:space:]]*yes' "$ucfg" 2>/dev/null; then
+  note "upstream is not TLS; pad-queries applies only to TLS forwarders"
+elif ! command -v dig >/dev/null 2>&1; then
+  warn "upstream queries hide name length" "dig is not installed"
+elif ! command -v python3 >/dev/null 2>&1; then
+  warn "upstream queries hide name length" "python3 is not installed"
+else
+  pad_py="$(dirname "$0")/pad-packets.py"
+  if [[ ! -f $pad_py ]]; then
+    warn "upstream queries hide name length" "pad-packets.py is not next to this script"
+  else
+    ip_args=()
+    while read -r addr; do
+      [[ -n $addr ]] || continue
+      ip_args+=(--dest-ip "${addr%%@*}")
+    done < <(grep -E '^[[:space:]]*forward-addr:' "$ucfg" | sed -E 's/^[[:space:]]*forward-addr:[[:space:]]*//')
+    if ((${#ip_args[@]} == 0)); then
+      warn "upstream queries hide name length" "no forward-addr to watch"
+    else
+      # 48 extra bytes keeps both names inside one 128-byte block. classify
+      # is told the same number; a gap of about that size is a failure.
+      name_gap=48
+      lenfile=$(mktemp)
+      errfile=$(mktemp)
+      python3 -u "$pad_py" capture "${ip_args[@]}" >"$lenfile" 2>"$errfile" &
+      cap_pid=$!
+      sleep 0.3
+      if ! kill -0 "$cap_pid" 2>/dev/null; then
+        wait "$cap_pid" || true
+        warn "upstream queries hide name length" "capture failed: $(head -c 200 "$errfile" | tr '\n' ' ')"
+      else
+        extra=$(head -c "$name_gap" </dev/zero | tr '\0' 'b')
+        for _ in 1 2 3 4; do
+          id=$(tr -dc a-z0-9 </dev/urandom | head -c 6)
+          dig +time=3 +tries=1 "@127.0.0.1" "${id}.example.com" A >/dev/null 2>&1 || true
+          dig +time=3 +tries=1 "@127.0.0.1" "${id}${extra}.example.com" A >/dev/null 2>&1 || true
+        done
+        sleep 0.2
+        kill -TERM "$cap_pid" 2>/dev/null || true
+        wait "$cap_pid" || true
+        if [[ ! -s $lenfile ]]; then
+          err=$(head -c 200 "$errfile" | tr '\n' ' ')
+          warn "upstream queries hide name length" "${err:-no packets to the configured upstreams}"
+        else
+          IFS=$'\t' read -r verdict detail < <(python3 "$pad_py" classify --name-gap "$name_gap" <"$lenfile")
+          case $verdict in
+            pass) pass "upstream queries hide name length" "$detail" ;;
+            fail) fail "upstream queries hide name length" "$detail" ;;
+            warn) warn "upstream queries hide name length" "$detail" ;;
+            *) warn "upstream queries hide name length" "classifier said '${verdict:-} ${detail:-}'" ;;
+          esac
+        fi
+      fi
+      rm -f "$lenfile" "$errfile"
+    fi
+  fi
+fi
 
 # ===========================================================================
 section "4. Response policy zones"

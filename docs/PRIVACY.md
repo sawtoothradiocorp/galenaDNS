@@ -20,7 +20,7 @@ Three other organisations are involved, and each sees something different:
 
 | Who | Role | What they receive |
 |---|---|---|
-| Hetzner Online GmbH (Germany) | hosts both nodes, in Germany and Finland | the network traffic: every client address that connects, with timing and volume — never query names, which are encrypted in both directions |
+| Hetzner Online GmbH (Germany) | hosts both nodes, in Germany and Finland | the network traffic: every client address that connects, with the timing and size of each lookup — never query names, which are encrypted in both directions |
 | Quad9 (Switzerland) | the upstream resolver | every query name, attributed to the node's address — never yours |
 | Amazon Web Services (United States) | hosts the resolver's own DNS zone; runs its health checks and alerts | nothing about any client or query |
 
@@ -200,14 +200,33 @@ Two further consequences, which apply to blocking wherever it happens:
   against anyone watching the wire.
 
 - **Hetzner can see your traffic metadata.** They operate the network and the
-  hypervisor. They see every client IP that connects, with timing and volume — the
-  very data this resolver refuses to retain — and the TLS SNI, which names the
-  resolver. They do not see query names, because upstream traffic is encrypted.
-  They can image the running VM, memory included, which would expose the queries
-  being handled at that instant, the client addresses in the rate counters, both
-  caches, and the TLS private key. No configuration inside
-  the VM changes any of this. If your threat model includes the hosting provider,
-  this resolver is not the answer.
+  hypervisor. They see every client IP that connects, with the timing and size of
+  each lookup — the very data this resolver refuses to retain — and the TLS SNI,
+  which names the resolver. They do not see query names, because the traffic is
+  encrypted in both directions. They can image the running VM, memory included,
+  which would expose the queries being handled at that instant, the client
+  addresses in the rate counters, both caches, and the TLS private key. No
+  configuration inside the VM changes any of this. If your threat model includes
+  the hosting provider, this resolver is not the answer.
+
+- **Encryption hides the names, not the sizes.** An answer still has a length.
+  A blocked name comes back as a few dozen bytes and an ordinary answer is
+  larger, and the set of sizes in one page load is enough to guess many popular
+  sites. Nothing on the way back to the client rounds those lengths. unbound pads
+  an answer only for a query it received over TLS that already carried a padding
+  option, and dnsdist unwraps the client's connection onto plain DNS on loopback
+  before unbound sees it, so that padding never happens. `make audit` checks
+  that, with a padded query and an unpadded one over DoT: neither answer may
+  carry a padding option. The server also cannot
+  change the size of the query the client already sent, and it cannot hide how
+  many lookups a page makes or when. Anyone watching the connection sees all of
+  that: the network you are on, and the hosting provider. Rounding the answers
+  is open work, recorded in [BACKLOG.md](BACKLOG.md).
+
+  Queries leaving for Quad9 are a separate case. `pad-queries: yes` rounds each
+  of them up to a multiple of 128 bytes, so the name's exact length does not
+  show on that uplink. `make audit` asserts the setting and watches the packets:
+  a short name and a longer one have to leave at the same size.
 
 - **A resolver with few users protects them less.** Correlating a client to a query
   requires matching inbound connections against outbound traffic. With many
@@ -277,8 +296,6 @@ Two further consequences, which apply to blocking wherever it happens:
   location can prevent is a lawful order, in either jurisdiction, to *start*
   collecting from now on — possibly with an order not to say so. This document
   cannot promise anything about the future.
-- **Timing and volume are observable** to anyone watching the network, even though
-  the content is encrypted.
 - **This is one operator's server.** You are trusting whoever runs it. The
   verifiable part is that the configuration is in this repository and
   `make audit` checks the running system against it.
