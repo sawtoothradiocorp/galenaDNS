@@ -691,7 +691,7 @@ variable "stats_collector_ssh_keys" {
   description = <<-EOT
     Public keys allowed to read aggregate dnsdist counters, and nothing else.
     Each is installed in root's authorized_keys pinned to
-    /opt/galena/bin/dump-stats.sh with `restrict`, so a key here cannot open a
+    /usr/local/sbin/galena-dump-stats with `restrict`, so a key here cannot open a
     shell, forward a port, or run any other command - it can only print
     dumpStats(). Empty by default.
 

@@ -385,7 +385,7 @@ through home NAT is the classic — is invisible from a datacenter. See docs/BAC
 
 `stats_collector_ssh_keys` in `terraform.tfvars` lists public keys allowed to read
 dnsdist's aggregate counters, so resolver load can be graphed somewhere off-node. Each
-key is installed in root's `authorized_keys` pinned to `/opt/galena/bin/dump-stats.sh`
+key is installed in root's `authorized_keys` pinned to `/usr/local/sbin/galena-dump-stats`
 with `restrict`, which means a key here cannot open a shell, forward a port, read a file
 or run any other command — it can only print `dumpStats()`. `bootstrap.sh` rewrites only
 the block between its own markers, so the admin key Hetzner injected at creation is never

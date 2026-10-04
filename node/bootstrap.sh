@@ -613,7 +613,7 @@ ok "dnsdist running"
 # --------------------------------------------------------------------------
 step "Stats collector keys"
 
-install -D -m 0755 "${REPO}/bin/dump-stats.sh" /opt/galena/bin/dump-stats.sh
+install -m 0755 "${REPO}/bin/dump-stats.sh" /usr/local/sbin/galena-dump-stats
 install -d -m 0700 /root/.ssh
 touch /root/.ssh/authorized_keys
 chmod 600 /root/.ssh/authorized_keys
@@ -640,11 +640,11 @@ if [[ -n ${GALENA_STATS_SSH_KEYS_B64:-} ]] \
       [[ -n ${sc_key//[[:space:]]/} ]] || continue
       # restrict = no pty, no agent or port forwarding, no user rc. With the
       # forced command that leaves exactly one capability: print dumpStats().
-      printf 'command="/opt/galena/bin/dump-stats.sh",restrict %s\n' "$sc_key"
+      printf 'command="/usr/local/sbin/galena-dump-stats",restrict %s\n' "$sc_key"
     done <<< "$sc_keys"
     printf '%s\n' "$SC_END"
   } >> "$sc_tmp"
-  ok "$(grep -c '^command="/opt/galena/bin/dump-stats.sh"' "$sc_tmp") collector key(s), pinned to dump-stats.sh"
+  ok "$(grep -c '^command="/usr/local/sbin/galena-dump-stats"' "$sc_tmp") collector key(s), pinned to galena-dump-stats"
 else
   ok "no collector keys configured (managed block removed if it existed)"
 fi
@@ -659,10 +659,10 @@ if grep -qF "$SC_BEGIN" /root/.ssh/authorized_keys; then
   if awk -v b="$SC_BEGIN" -v e="$SC_END" '
        $0 == b { inb = 1; next }
        $0 == e { inb = 0; next }
-       inb && $0 !~ /^command="\/opt\/galena\/bin\/dump-stats\.sh",restrict / { bad = 1 }
+       inb && $0 !~ /^command="\/usr\/local\/sbin\/galena-dump-stats",restrict / { bad = 1 }
        END { exit !bad }
      ' /root/.ssh/authorized_keys; then
-    die "a key in the managed collector block is not pinned to dump-stats.sh"
+    die "a key in the managed collector block is not pinned to galena-dump-stats"
   fi
   ok "every collector key is command-pinned and restricted"
 fi
