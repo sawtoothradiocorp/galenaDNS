@@ -609,6 +609,65 @@ systemctl is-active --quiet dnsdist || die "dnsdist did not start — journalctl
 ok "dnsdist running"
 
 # --------------------------------------------------------------------------
+# Stats collector keys
+# --------------------------------------------------------------------------
+step "Stats collector keys"
+
+install -D -m 0755 "${REPO}/bin/dump-stats.sh" /opt/galena/bin/dump-stats.sh
+install -d -m 0700 /root/.ssh
+touch /root/.ssh/authorized_keys
+chmod 600 /root/.ssh/authorized_keys
+
+SC_BEGIN="# BEGIN galena stats collector (managed by bootstrap.sh)"
+SC_END="# END galena stats collector"
+
+# Only the marked block is rewritten, so the admin key Hetzner injected when the
+# server was created is never touched. Losing that would mean losing the only
+# way back in, and server ssh_keys cannot be changed without a replacement.
+sc_tmp=$(mktemp)
+awk -v b="$SC_BEGIN" -v e="$SC_END" '
+  $0 == b { skip = 1; next }
+  $0 == e { skip = 0; next }
+  !skip   { print }
+' /root/.ssh/authorized_keys > "$sc_tmp"
+
+if [[ -n ${GALENA_STATS_SSH_KEYS_B64:-} ]] \
+  && sc_keys=$(printf '%s' "$GALENA_STATS_SSH_KEYS_B64" | base64 -d 2>/dev/null) \
+  && [[ -n ${sc_keys//[[:space:]]/} ]]; then
+  {
+    printf '%s\n' "$SC_BEGIN"
+    while IFS= read -r sc_key; do
+      [[ -n ${sc_key//[[:space:]]/} ]] || continue
+      # restrict = no pty, no agent or port forwarding, no user rc. With the
+      # forced command that leaves exactly one capability: print dumpStats().
+      printf 'command="/opt/galena/bin/dump-stats.sh",restrict %s\n' "$sc_key"
+    done <<< "$sc_keys"
+    printf '%s\n' "$SC_END"
+  } >> "$sc_tmp"
+  ok "$(grep -c '^command="/opt/galena/bin/dump-stats.sh"' "$sc_tmp") collector key(s), pinned to dump-stats.sh"
+else
+  ok "no collector keys configured (managed block removed if it existed)"
+fi
+
+install -m 0600 "$sc_tmp" /root/.ssh/authorized_keys
+rm -f "$sc_tmp"
+
+# Prove the pinning rather than trust the file we just wrote: a key in the
+# managed block without a forced command would be a root shell on a resolver
+# handed to an analytics host.
+if grep -qF "$SC_BEGIN" /root/.ssh/authorized_keys; then
+  if awk -v b="$SC_BEGIN" -v e="$SC_END" '
+       $0 == b { inb = 1; next }
+       $0 == e { inb = 0; next }
+       inb && $0 !~ /^command="\/opt\/galena\/bin\/dump-stats\.sh",restrict / { bad = 1 }
+       END { exit !bad }
+     ' /root/.ssh/authorized_keys; then
+    die "a key in the managed collector block is not pinned to dump-stats.sh"
+  fi
+  ok "every collector key is command-pinned and restricted"
+fi
+
+# --------------------------------------------------------------------------
 # Verification
 # --------------------------------------------------------------------------
 step "Verifying"

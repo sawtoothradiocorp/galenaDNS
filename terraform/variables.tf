@@ -687,6 +687,46 @@ variable "enable_localhost_metrics" {
   default     = false
 }
 
+variable "stats_collector_ssh_keys" {
+  description = <<-EOT
+    Public keys allowed to read aggregate dnsdist counters, and nothing else.
+    Each is installed in root's authorized_keys pinned to
+    /opt/galena/bin/dump-stats.sh with `restrict`, so a key here cannot open a
+    shell, forward a port, or run any other command - it can only print
+    dumpStats(). Empty by default.
+
+    This is how the ALTURAS analytics host graphs resolver load. The counters
+    are process-wide totals: no client address, no query name. With
+    dynblock_ring_entries = 0 the ring buffers are off, so no per-client record
+    exists on the node to expose in the first place, and unbound statistics stay
+    off either way - bin/privacy-audit.sh asserts that.
+
+    Takes effect on `make deploy`, not `make apply`. It travels in node.env
+    rather than user_data, which only runs on first boot and is ignored after
+    creation; server ssh_keys cannot be used because changing that forces
+    Hetzner to replace the server.
+  EOT
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition = alltrue([
+      for k in var.stats_collector_ssh_keys :
+      can(regex("^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp[0-9]+) AAAA", trimspace(k)))
+    ])
+    error_message = "Each entry must be an OpenSSH public key, e.g. \"ssh-ed25519 AAAA... comment\"."
+  }
+
+  validation {
+    # node.env travels through Hetzner's metadata service and can be read back
+    # out of the API, so a private key pasted here would be exposed.
+    condition = alltrue([
+      for k in var.stats_collector_ssh_keys : !can(regex("PRIVATE KEY", k))
+    ])
+    error_message = "That looks like a PRIVATE key. Only public keys belong here."
+  }
+}
+
 variable "journal_runtime_max_use" {
   description = "journald RuntimeMaxUse. Logs live in RAM only (Storage=volatile) and are lost on reboot by design."
   type        = string

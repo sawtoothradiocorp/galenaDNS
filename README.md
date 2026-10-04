@@ -381,6 +381,31 @@ is covered by the Route 53 v6 health checks, which prove TCP and nothing more. A
 there is one vantage point: a failure that only affects some networks — UDP/QUIC
 through home NAT is the classic — is invisible from a datacenter. See docs/BACKLOG.md.
 
+### Exporting counters
+
+`stats_collector_ssh_keys` in `terraform.tfvars` lists public keys allowed to read
+dnsdist's aggregate counters, so resolver load can be graphed somewhere off-node. Each
+key is installed in root's `authorized_keys` pinned to `/opt/galena/bin/dump-stats.sh`
+with `restrict`, which means a key here cannot open a shell, forward a port, read a file
+or run any other command — it can only print `dumpStats()`. `bootstrap.sh` rewrites only
+the block between its own markers, so the admin key Hetzner injected at creation is never
+touched, and it refuses to finish if any key in that block is missing its forced command.
+
+What those counters contain is bounded by the node, not by the wrapper: query and response
+totals, cache hits and misses, latency buckets, per-rule hit counts. No client address and
+no query name. With `dynblock_ring_entries = 0` the ring buffers are off, so `grepq()` and
+`topQueries()` have nothing to return and no per-client record exists to expose; unbound
+statistics stay off regardless, which the privacy audit asserts. It is the same aggregate
+surface `bin/privacy-audit.sh` already reads for its own cache-hits line, so `make audit`
+reports exactly what it did before.
+
+It travels in `node.env`, so it takes effect on **`make deploy`**, not `make apply`. The
+server's own `ssh_keys` is deliberately not used for this: changing that attribute makes
+Hetzner replace the server.
+
+Empty by default. Removing a key from the list and redeploying removes it from the node.
+
+
 ## Client setup
 
 Clients split into two kinds, and only the first gets failover from DNS:
