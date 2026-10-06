@@ -342,7 +342,10 @@ kdig_answer() {
     echo "ERR kdig-failed"
     return
   fi
-  if ! grep -q '->>HEADER<<-' <<<"$out"; then
+  # -- is load-bearing: the pattern starts with a dash, so without it grep
+  # parses ->>HEADER<<- as options, exits 2, and this branch is taken for every
+  # answer no matter what came back.
+  if ! grep -q -- '->>HEADER<<-' <<<"$out"; then
     echo "ERR no-response"
     return
   fi
