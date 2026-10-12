@@ -151,6 +151,24 @@ make nodes      # prints the records Terraform created
 environment too, not just `HCLOUD_TOKEN` — an SSO profile is fine. It still
 creates nothing.
 
+State lives in this project's GitLab-managed Terraform state rather than in a
+local file, so more than one admin host can plan against the same truth and
+GitLab holds a lock while an apply runs. `terraform init`, `make plan` and
+`make apply` therefore need two more variables in the environment:
+
+```sh
+export TF_HTTP_USERNAME=<gitlab username>
+export TF_HTTP_PASSWORD=<personal access token, api scope>
+```
+
+The state endpoint is authenticated API only — publishing this repository does
+not publish the state. An `api`-scoped PAT is required; the OAuth token `glab`
+stores in the keyring is refused, because the backend authenticates with HTTP
+Basic. `make check` is unaffected and still needs no credentials: it initialises
+with `-backend=false`. Terraform is deliberately **not** run from CI — see the
+reasoning in `terraform/versions.tf` — so no cloud credential belongs in this
+project's CI/CD settings.
+
 Two traps here, both of which fail loudly rather than quietly:
 
 - Terraform authenticates to AWS through `aws_profile` (an SSO profile), while the
