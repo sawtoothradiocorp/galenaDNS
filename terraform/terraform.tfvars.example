@@ -52,6 +52,13 @@ nodes = {
 # you shake out DNS-01. The cert will not be publicly trusted until you flip it.
 # acme_staging = true
 
+# Publish a CAA record restricting issuance for `domain` to Let's Encrypt over
+# DNS-01, with no wildcards. On by default — the record costs nothing and an
+# absent one authorises every public CA. Staging is unaffected: Let's Encrypt
+# uses the same CAA identity for both environments. Set false only if something
+# else owns the issuance policy for this name.
+# manage_caa_record = true
+
 # Response-IP blocking is the most aggressive layer; set false to drop just it.
 # enable_threat_ip_blocking = true
 

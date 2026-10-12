@@ -35,6 +35,21 @@ output "dns_records" {
   )
 }
 
+# Printed for the same reason as the records: so that "there is an issuance
+# policy" is something you can see rather than assume. When this is not managed
+# the line says so in full, because an absent CAA record is not a neutral state —
+# it means every public CA is authorised for the name.
+output "dns_caa" {
+  description = "The CAA record restricting who may issue a certificate for var.domain, and by which validation method."
+  value = var.manage_caa_record ? [
+    for v in sort(tolist(aws_route53_record.caa[0].records)) :
+    format("%-32s %-6s TTL %d  %s", "${var.domain}.", "CAA", aws_route53_record.caa[0].ttl, v)
+    ] : [
+    format("%-32s %-6s %s", "${var.domain}.", "CAA",
+    "NOT MANAGED — any public CA may issue for this name unless the parent zone says otherwise"),
+  ]
+}
+
 # Says out loud whether a dead node actually disappears from DNS, and how long that
 # takes, because "there are two nodes" and "there is failover" are different claims
 # and only one of them is worth relying on.

@@ -92,14 +92,15 @@ export AWS_PROFILE=<your-profile>
 ```
 
 or set `aws_profile` in `terraform.tfvars`. It needs read access to the zone,
-`ChangeResourceRecordSets` for A and AAAA, and the Route 53 health-check actions
+`ChangeResourceRecordSets` for A, AAAA and CAA, and the Route 53 health-check actions
 (`CreateHealthCheck`, `GetHealthCheck`, `UpdateHealthCheck`, `DeleteHealthCheck`,
 and `ChangeTagsForResource` / `ListTagsForResource` for their tags).
 
 **2. A long-lived IAM key on the node, for certbot renewal.** This one cannot be
 SSO: renewal runs unattended from a timer for years, and SSO tokens expire in
 hours. Because it only ever writes `_acme-challenge` records, scope it to **TXT
-only** — so a key stolen off the node cannot repoint your hostname:
+only** — so a key stolen off the node can neither repoint your hostname nor
+rewrite the CAA record that limits who may certify it:
 
 ```json
 {
@@ -180,6 +181,14 @@ Route 53 returns up to 8 of the **healthy** values in random order, so clients s
 spread across nodes — and a dead node stops being handed out. `hc` is the attached
 health check; see "Failover" below for why the shape is one record set per node
 rather than one record set with two values.
+
+It creates one more record that is not an address — the CAA record naming who may
+issue a certificate for the name, printed separately by `make nodes`:
+
+```
+base.dns.swthrc.com.   CAA    TTL 300  0 issue "letsencrypt.org;validationmethods=dns-01"
+base.dns.swthrc.com.   CAA    TTL 300  0 issuewild ";"
+```
 
 Reverse DNS is set too, in `terraform/rdns.tf`. Both addresses get a PTR of
 `base.dns.swthrc.com` rather than Hetzner's default
@@ -863,6 +872,19 @@ disk. Without `reloadAllCertificates()` after renewal it keeps serving the old
 certificate until the process restarts — meaning it would happily serve an expired
 certificate a month after a successful renewal.
 
+**CAA, pinned to one CA and one validation method.** `terraform/dns.tf` publishes
+`0 issue "letsencrypt.org;validationmethods=dns-01"` and `0 issuewild ";"` on the
+resolver hostname. Without a CAA record any publicly trusted CA will issue for the
+name to whoever passes its own validation — and dnsdist authenticates itself to
+every client with that certificate and nothing else, so a certificate from a CA
+this project has never used is a working interception of every query. Naming the
+method is the half that does the work: HTTP-01 and TLS-ALPN-01 are proved by
+answering on a port, DNS-01 only by writing a TXT record in the hosted zone.
+Validation walks up from the name and stops at the first CAA record it finds, so
+this one replaces the apex's policy rather than adding to it, and the apex stays
+permissive for its own ACM-issued certificate. `acme_staging` is unaffected —
+Let's Encrypt publishes one CAA identity for staging and production both.
+
 **DNS records are in Terraform, credentials are not.** The A/AAAA records are not
 secret and belong in state where they can be kept in step with the node addresses.
 The IAM key is a different matter: a sensitive Terraform variable is written to
@@ -1015,6 +1037,8 @@ monitor/            the external prober, its systemd units and installer, for
 | `make deploy` refuses, saying state is behind the configuration | Outputs live in state, so a tfvars change reaches a node only after `make apply` recomputes them. Run `make apply` (it may report no infrastructure changes), then deploy |
 | `make deploy` refuses, saying plan failed | Usually expired AWS SSO. It refuses rather than pushing settings it cannot confirm are current |
 | `apply` fails with a record conflict | The A/AAAA record already exists outside state. Delete it, or import it, or set `manage_dns_records = false` |
+| `certbot` fails with `CAA record ... prevents issuance` | The hostname's CAA record disagrees with what certbot is doing. It allows Let's Encrypt by DNS-01 only, so another CA, or HTTP-01/TLS-ALPN-01, is refused by design. Staging is not the cause — Let's Encrypt uses one CAA identity for both environments |
+| `apply` fails with a record conflict on CAA | A CAA record already exists on the hostname outside state. That is somebody's issuance policy: read it before deleting it, then import it or set `manage_caa_record = false` |
 | `plan` fails with `AccessDenied` on `GetHealthCheck` | Terraform is using the node's TXT-only ACME key, because `aws_profile` is empty. Set it, or export an identity with Route 53 health-check access |
 | `make ssh`, `deploy` or `audit` time out while DoT still answers | Your public address is no longer `admin_cidr`. Check with `curl -4 https://ifconfig.co`. If `admin_cidr` is a jump host you can still reach, go through it — `ssh -J <jumphost> root@<node>`, or add `ProxyJump <jumphost>` for the node addresses in `~/.ssh/config` so the `make` targets follow. Widen `admin_cidr` only for an address you control; a VPN exit is shared with strangers |
 | `dig` returns only some nodes' addresses | Expected when a node is failing its health check — Route 53 withholds it. `terraform output dns_health_checks`, then `aws route53 get-health-check-status` |
