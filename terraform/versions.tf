@@ -16,6 +16,46 @@ terraform {
       version = "~> 1.69"
     }
   }
+
+  # State is GitLab-managed, not a file on one machine.
+  #
+  # Until 2026-10-11 the backend was local, so the only record of 18 live
+  # resources sat in one working copy on one machine, with
+  # terraform.tfstate.backup exactly one apply behind it and no locking of any
+  # kind. More than one admin host does this work now, and two of them holding
+  # divergent local state is how a node gets adopted twice or orphaned.
+  #
+  # This shares STATE ONLY. It is not a step toward running Terraform in CI, and
+  # should not be read as one: this repository is public, so a runner holding
+  # HCLOUD_TOKEN would execute whatever an MR author put in a provisioner or an
+  # `external` data source, on a branch nobody has read yet. Applies stay on
+  # trusted hosts, by hand.
+  #
+  # Publishing the repository does not publish the state. The endpoint below is
+  # authenticated API only; an unauthenticated GET gets 404, not the state.
+  #
+  # Auth is HTTP Basic, from the environment, never from this file:
+  #     export TF_HTTP_USERNAME=<gitlab username>
+  #     export TF_HTTP_PASSWORD=<personal access token, api scope>
+  # Verified 2026-10-11: an `api`-scoped PAT is required. The token `glab` keeps
+  # in the system keyring is an OAuth token — it authenticates as
+  # `Authorization: Bearer` but is refused 401 under Basic auth, which is what
+  # this backend sends, so it cannot be reused here.
+  #
+  # 86968566 is this project's numeric id. `galena-dns` is the state name within
+  # the project: changing it silently points Terraform at a different and empty
+  # state, so it does not change once state is stored under it.
+  backend "http" {
+    address        = "https://gitlab.com/api/v4/projects/86968566/terraform/state/galena-dns"
+    lock_address   = "https://gitlab.com/api/v4/projects/86968566/terraform/state/galena-dns/lock"
+    unlock_address = "https://gitlab.com/api/v4/projects/86968566/terraform/state/galena-dns/lock"
+    lock_method    = "POST"
+    unlock_method  = "DELETE"
+
+    # GitLab holds the lock for the whole of an apply, so a second operator
+    # arriving mid-apply waits and retries instead of failing at once.
+    retry_wait_min = 5
+  }
 }
 
 provider "hcloud" {

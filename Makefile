@@ -48,6 +48,12 @@ fmt: ## Format Terraform and check shell scripts
 
 check: ## Validate everything that can be checked without spending money
 	@$(TF) fmt -check -recursive
+# `validate` needs an initialised working directory, and since state moved to
+# the GitLab http backend a plain `init` would demand TF_HTTP_PASSWORD and a
+# network round trip. -backend=false initialises providers only, which keeps
+# this target runnable on a fresh clone of a public repo by someone who has
+# no credentials at all and only wants to check their syntax.
+	@$(TF) init -backend=false -input=false >/dev/null
 	@$(TF) validate
 	@$(MAKE) --no-print-directory fmt
 	@echo "OK"
