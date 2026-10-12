@@ -1,5 +1,5 @@
-# Route 53 records for the resolver hostname, and the health checks that make a
-# dead node disappear from them.
+# Route 53 records for the resolver hostname, the health checks that make a dead
+# node disappear from them, and the CAA record that says who may certify it.
 #
 # All nodes share one hostname. Each node contributes its own A (and AAAA) record
 # set under a `multivalue_answer_routing_policy`, which is what makes failover
@@ -14,8 +14,10 @@
 # Records are not secret, so unlike the ACME credentials there is no reason to keep
 # these out of Terraform.
 #
-# ACME DNS-01 does not depend on any of this — it only needs the _acme-challenge
-# TXT record, which certbot creates and removes itself.
+# ACME DNS-01 does not depend on the records or the health checks — it only needs
+# the _acme-challenge TXT record, which certbot creates and removes itself. It
+# does depend on the CAA record at the bottom of this file, which is the one thing
+# here that can stop a certificate being issued at all.
 
 locals {
   domain_labels = split(".", var.domain)
@@ -51,7 +53,9 @@ locals {
 }
 
 data "aws_route53_zone" "this" {
-  count        = var.manage_dns_records ? 1 : 0
+  # Either knob needs the zone id, and they are independent: the issuance policy
+  # is worth publishing even where the A/AAAA records are maintained by hand.
+  count        = var.manage_dns_records || var.manage_caa_record ? 1 : 0
   name         = local.zone_name
   private_zone = false
 }
@@ -186,5 +190,95 @@ resource "aws_route53_record" "aaaa" {
     : aws_route53_health_check.node_v4[each.key].id
   )
 
+  allow_overwrite = false
+}
+
+# ---------------------------------------------------------------------------
+# CAA: which CA may certify this name, and how it has to prove itself
+# ---------------------------------------------------------------------------
+# A CAA record is an allowlist of certificate authorities, published in the zone
+# the name lives in. Every publicly trusted CA is required by the CA/Browser
+# Forum Baseline Requirements to read it within 8 hours of issuing and to refuse
+# if it is not listed. With no CAA record anywhere above the name — which is how
+# this zone stood until this record landed — ANY publicly trusted CA will issue
+# for var.domain to whoever passes its own validation, and the first sign of it
+# is a Certificate Transparency entry nobody is watching.
+#
+# That matters more here than for a web host. dnsdist authenticates itself to
+# every client with this one certificate and nothing else: a DoT client pinned to
+# var.domain trusts any publicly trusted certificate for that name, so a
+# mis-issuance by a CA this project has never used is a working interception of
+# every query on the link that exists to stop exactly that. This record is the
+# cheap half of preventing it. CT monitoring is the other half and is not done —
+# see docs/BACKLOG.md.
+#
+# VALIDATION IS A TREE WALK AND THE CLOSEST RECORD WINS. A CA asked to issue for
+# base.dns.swthrc.com checks base.dns.swthrc.com, then swthrc.com, then com, and
+# uses the FIRST name that has a CAA record. It does not merge them. So this
+# record REPLACES whatever the apex publishes rather than adding to it, and the
+# apex stays deliberately permissive — it carries an ACM-issued certificate for a
+# CloudFront redirect, which a Let's Encrypt-only policy would break at renewal.
+# The two are different policies for different names on purpose; do not
+# "reconcile" them.
+#
+#   issue "letsencrypt.org;validationmethods=dns-01"
+#     Let's Encrypt, and only by DNS-01 — the method node/bootstrap.sh actually
+#     uses (certbot certonly --dns-route53). Naming the method is what makes this
+#     more than a CA allowlist. HTTP-01 and TLS-ALPN-01 are proved by answering
+#     on a port, so anyone who can get between a CA's validator and this node's
+#     :80 or :853 could satisfy them; DNS-01 can only be proved by writing a TXT
+#     record in a hosted zone, which is a different and much smaller set of
+#     people. Identifier and parameter are RFC 8657, spelled the way Let's
+#     Encrypt's own documentation spells them, with no space after the semicolon.
+#
+#     The staging CA is covered by the same entry, which is why acme_staging =
+#     true still works: Let's Encrypt publishes ONE CAA identity,
+#     letsencrypt.org, for staging and production both. There is no way to allow
+#     one and not the other by CA name.
+#
+#   issuewild ";"
+#     No wildcards, from anyone. bootstrap.sh asks for exactly one name
+#     (-d "$GALENA_DOMAIN"), so nothing here needs *.base.dns.swthrc.com, and
+#     without this line the issue entry above would permit it — issue governs
+#     wildcard issuance too until an issuewild record appears. An empty value is
+#     RFC 8659's spelling of "no issuer is authorised". issuewild, once present,
+#     governs wildcards exclusively, so it deliberately repeats nothing from the
+#     entry above.
+#
+# accounturi is ABSENT, as a judgement rather than an oversight: the value is per
+# node and per environment, and a node rebuild invents a new one. The reasoning
+# and what it would take are in docs/BACKLOG.md section 4.
+#
+# WHAT THIS DOES NOT DO. It constrains honest CAs. A compromised one can ignore
+# CAA, browsers never read it, and it has no effect on certificates that already
+# exist. It is also only as trustworthy as the zone publishing it, which is the
+# real reason the node's ACME key is scoped to TXT and nothing else (README,
+# credential 2): a key that could write CAA would rewrite this record first and
+# then issue whatever it liked.
+#
+# If this record is ever wrong the symptom is certbot refusing with "CAA record
+# for <name> prevents issuance" — see README "Troubleshooting".
+resource "aws_route53_record" "caa" {
+  count = var.manage_caa_record ? 1 : 0
+
+  zone_id = data.aws_route53_zone.this[0].zone_id
+  name    = var.domain
+  type    = "CAA"
+
+  # Not var.dns_record_ttl: that is short to keep failover fast, which is not a
+  # concern a record read once per issuance shares. Five minutes is still short
+  # enough that a mistake here can be corrected and the issuance retried
+  # immediately, and that is the only latency this record has.
+  ttl = 300
+
+  records = [
+    "0 issue \"letsencrypt.org;validationmethods=dns-01\"",
+    "0 issuewild \";\"",
+  ]
+
+  # Same reasoning as the A/AAAA records above, with more at stake: a CAA record
+  # already in the zone and not in state is somebody's issuance policy, and
+  # quietly replacing it could break a renewal that has nothing to do with this
+  # project. Fail and let a human read it first.
   allow_overwrite = false
 }

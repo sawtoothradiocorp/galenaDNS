@@ -55,10 +55,12 @@ check: ## Validate everything that can be checked without spending money
 plan: ## Show what would be created (no changes, no cost; needs AWS creds to read the zone)
 	@$(TF) plan -input=false
 
-nodes: ## Print node addresses, the DNS records, and whether failover is live
+nodes: ## Print node addresses, the DNS and CAA records, and whether failover is live
 	@$(TF) output -raw deploy_hint 2>/dev/null || true
 	@echo
 	@$(TF) output dns_records
+	@echo
+	@$(TF) output dns_caa
 	@echo
 	@printf 'failover: '; $(TF) output -raw dns_failover 2>/dev/null || echo unknown
 	@echo

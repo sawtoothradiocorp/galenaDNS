@@ -28,6 +28,12 @@ variable "manage_dns_records" {
   default     = true
 }
 
+variable "manage_caa_record" {
+  description = "Create the CAA record for var.domain, restricting certificate issuance to Let's Encrypt via DNS-01 and forbidding wildcards. Independent of manage_dns_records — the policy is worth publishing even where the A/AAAA records are maintained by hand — but it needs the same kind of Route 53 access, and the node's TXT-only ACME key does not have it. Set false to leave issuance to whatever the parent zone allows, which with no CAA record anywhere above the name is every public CA."
+  type        = bool
+  default     = true
+}
+
 variable "route53_zone_name" {
   description = "Hosted zone holding var.domain, e.g. swthrc.com. Leave empty to derive it as the last two labels of var.domain; set it explicitly for multi-part public suffixes such as example.co.uk."
   type        = string

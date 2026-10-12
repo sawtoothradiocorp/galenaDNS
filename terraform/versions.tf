@@ -44,10 +44,13 @@ provider "aws" {
   # false` would still demand working AWS credentials for a plan that touches no
   # AWS resource at all, and would fail on an expired SSO cache.
   #
-  # When records ARE managed these are null, so the normal credential chain
-  # (AWS_PROFILE, env vars, SSO) applies as usual.
-  access_key = var.manage_dns_records ? null : "unused-placeholder"
-  secret_key = var.manage_dns_records ? null : "unused-placeholder"
+  # When either knob is on these are null, so the normal credential chain
+  # (AWS_PROFILE, env vars, SSO) applies as usual. Both have to be named here:
+  # manage_caa_record alone would otherwise be handed the placeholder and fail
+  # against the real zone, which reads as a credential problem rather than as
+  # this expression being out of date.
+  access_key = var.manage_dns_records || var.manage_caa_record ? null : "unused-placeholder"
+  secret_key = var.manage_dns_records || var.manage_caa_record ? null : "unused-placeholder"
 
   # Skip the eager STS pre-flight. Real API calls still fail loudly on bad
   # credentials; this only stops the provider probing at configure time.

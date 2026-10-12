@@ -384,6 +384,29 @@ Not code. All of it blocks "lightly advertised", none of it blocks personal use.
   answer and a blocked name both come back at a multiple of 468 bytes, on a
   cache hit as well as a miss.
 
+- **CAA could pin the ACME account, and deliberately does not.** The record in
+  `terraform/dns.tf` names the CA and the validation method. RFC 8657's third
+  parameter, `accounturi`, would pin issuance to one ACME account key as well,
+  which is the strongest form of the record: a domain hijack would then also need
+  an account key off a node. It is left out because the value is per node and per
+  environment. Every node registers its own account during `bootstrap.sh`,
+  staging and production accounts differ, and
+  `terraform apply -replace='hcloud_server.node["hel1-a"]'` followed by
+  `make deploy` produces a node holding an account the record has never heard of.
+  Pinning would make a rebuild fail to get a certificate until someone remembered
+  to apply this file first — in the one situation where the certificate step
+  stopping is least welcome. Doing it properly means one `issue` entry per node
+  account, read from `certbot show_account` on each node (`--test-cert` for the
+  staging one), and a standing rule that the record is updated before a node is
+  replaced rather than after. Worth it once node replacement is routine enough to
+  be scripted, and not before.
+- **Nothing watches Certificate Transparency.** The CAA record stops a compliant
+  CA from mis-issuing for the resolver hostname; it does nothing about one that
+  ignores CAA, and browsers never read it. The detection half is a CT monitor on
+  the name — crt.sh publishes an RSS feed per identity, and Let's Encrypt and
+  Google both run free alerting — so a certificate issued for
+  `base.dns.swthrc.com` by anything other than this repo's certbot produces mail
+  rather than silence. Cheap, external to the nodes, and currently absent.
 - **Rate limiting — tested for real, 2026-09-27.** The old test could never have
   found a limit: 200 sequential kdig calls, each a new TLS handshake, run well under
   10 q/s from far away. It now pipelines queries over one DoT connection. Against
