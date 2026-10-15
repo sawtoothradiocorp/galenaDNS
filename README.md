@@ -1,5 +1,23 @@
 # galenaDNS
 
+<!-- Versions here are the same ones the "Pinned versions" table near the bottom
+     carries, and that table is the authoritative copy: it has the reasoning
+     beside each number, and variables.tf and versions.tf are where the pins are
+     actually enforced. These are a summary for anyone who only reads the top of
+     the page. They are static badges rather than ones shields.io derives from
+     the repository, so nothing updates them on its own - a version bump changes
+     the pin, the table and this row together, or the row starts lying.
+
+     dnsdist and unbound carry no logo because shields.io has no icon for
+     PowerDNS or NLnet Labs; the Amazon icons were withdrawn over trademark
+     policy, which is why the two Terraform providers are left to the table
+     rather than given logoless badges of their own. -->
+[![Debian 13 (trixie)](https://img.shields.io/badge/Debian-13_%28trixie%29-A81D33?logo=debian&logoColor=white)](https://www.debian.org/)
+[![dnsdist 2.1.x](https://img.shields.io/badge/dnsdist-2.1.x-2D7DD2)](https://dnsdist.org/)
+[![unbound 1.26.1](https://img.shields.io/badge/unbound-1.26.1-0E7C66)](https://nlnetlabs.nl/projects/unbound/about/)
+[![certbot 4.0.0](https://img.shields.io/badge/certbot-4.0.0-003A70?logo=letsencrypt&logoColor=white)](https://certbot.eff.org/)
+[![Terraform >= 1.9](https://img.shields.io/badge/Terraform-%E2%89%A5_1.9-7B42BC?logo=terraform&logoColor=white)](https://developer.hashicorp.com/terraform)
+
 A public, non-logging, ad/tracker/malware-blocking encrypted DNS resolver on
 Hetzner Cloud. Terraform for the infrastructure, dnsdist for the encrypted front
 end, unbound for DNSSEC validation and policy, forwarding upstream over
@@ -1035,6 +1053,10 @@ monitor/            the external prober, its systemd units and installer, for
 ```
 
 ## Pinned versions
+
+This table is the authoritative copy. The badges at the top of this file repeat
+the five that have a version worth showing, and nothing keeps them in step
+automatically — change a pin here and change the badge with it.
 
 | Component | Version | Why |
 |---|---|---|
