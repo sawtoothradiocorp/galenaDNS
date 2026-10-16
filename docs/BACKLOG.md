@@ -372,8 +372,13 @@ Not code. All of it blocks "lightly advertised", none of it blocks personal use.
   The padding belongs in dnsdist, on the way back to the client. `padResponses`
   does it for DoT, DoH, DoQ and DoH3, rounding every response to a multiple of
   468 bytes (RFC 8467), including answers the client did not ask to have padded.
-  It is a 2.2 feature. As of 2026-09-28 the newest stable package is 2.1.2, which
-  is what the nodes run (`trixie-dnsdist-21`); 2.2.0 exists only as an alpha.
+  It is a 2.2 feature, and there is still no 2.2 to install. Re-checked
+  2026-10-16: upstream has tagged nothing past `dnsdist-2.2.0-alpha0` — no beta,
+  no release candidate — and repo.powerdns.com publishes no `dnsdist-22` suite
+  for any codename. Trixie has no `-master` suite either, unlike bookworm and
+  bullseye, so a prerelease will not show up there ahead of the release. The
+  newest stable package is 2.1.3, which is what the nodes run
+  (`trixie-dnsdist-21`); it was 2.1.2 when this was first written.
   Rewriting the EDNS OPT record in Lua on 2.1 would be the same feature,
   maintained here, on the path every answer takes.
 
