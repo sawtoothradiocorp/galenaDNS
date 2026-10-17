@@ -1,0 +1,81 @@
+; galena-dns local blocklist (RPZ)
+;
+; Loaded SECOND: after the allowlist, ahead of every downloaded feed. The
+; allowlist stays first so that a false positive in here is overridden exactly
+; the way one in any other zone is — `make audit` asserts that ordering.
+;
+; ---------------------------------------------------------------------------
+; Why this zone exists when Quad9 already blocks most of what is in it
+;
+; Quad9 denies a blocked name with an UNSIGNED NXDOMAIN. For a signed parent
+; zone our local validator correctly refuses that forged denial, so the client
+; sees SERVFAIL rather than NXDOMAIN. The name is still blocked — but some
+; clients retry SERVFAIL against a fallback resolver, which both defeats the
+; block and sends that query somewhere else. A name listed HERE is answered
+; locally by RPZ, and RPZ rewrites are not validated against the real zone, so
+; it returns a clean NXDOMAIN and the query never leaves the node.
+; See README, "Two things measured after the switch".
+;
+; Measured 2026-10-16 from a node, against 9.9.9.9 over DoT:
+;
+;     fearevolve.com         NXDOMAIN, AUTHORITY: 0   no SOA, no NSEC3, no RRSIG
+;     zq7x4-...-nope.com     NXDOMAIN, AUTHORITY: 8   full signed denial
+;
+; and through our own unbound: SERVFAIL when validating, NXDOMAIN with +cd.
+; That is the forged-denial path confirmed, not assumed.
+; ---------------------------------------------------------------------------
+; Owner names are RELATIVE to the zone apex, exactly as in allowlist.rpz: a
+; bare "example.com" below blocks example.com. No trailing dot. The wildcard is
+; listed separately because it does NOT cover the bare name.
+;
+;     example.com            CNAME .
+;     *.example.com          CNAME .
+;
+; After editing, `make deploy`. To check it took effect:
+;     unbound-control auth_zone_reload blocklist.rpz.galena
+; ---------------------------------------------------------------------------
+
+$TTL 3600
+@   SOA localhost. root.localhost. 1 3600 600 86400 3600
+@   NS  localhost.
+
+; --- Citizen Lab Report 195, "Exposing AdFection", 2026-10-15 ---------------
+;
+; Candiru (trading as Integrity Labs) validator and C&C infrastructure, plus one
+; Discover-Tech-linked domain that behaves identically. Added 2026-10-16.
+;
+; These are the AdFection indicators that no local feed carries. Checked against
+; Hagezi pro, tif.mini and tif-ips as deployed on 2026-10-16: all nine were
+; absent from all three, and blocked upstream only. The Discover-Tech ad
+; DELIVERY domains from the same report — mtrtb.com, controlium.net and 15 more
+; — are deliberately not repeated here, because Hagezi pro already carries them
+; and they already answer as a clean local NXDOMAIN. Verified, not assumed.
+;
+; All nine were already dead at the registry when they were added, so this is a
+; guard against re-registration and rotation, not a live block.
+
+; Validators
+keyadapter.com             CNAME .
+*.keyadapter.com           CNAME .
+sharethere.net             CNAME .
+*.sharethere.net           CNAME .
+
+; Command and control
+fearevolve.com             CNAME .
+*.fearevolve.com           CNAME .
+jobmarcher.com             CNAME .
+*.jobmarcher.com           CNAME .
+insightenterprisells.com   CNAME .
+*.insightenterprisells.com CNAME .
+plasticbells.com           CNAME .
+*.plasticbells.com         CNAME .
+outdooutcome.com           CNAME .
+*.outdooutcome.com         CNAME .
+suggestutterly.com         CNAME .
+*.suggestutterly.com       CNAME .
+
+; Discover-Tech linked, same forged-denial behaviour as the C&C set
+sincereaccertain.com       CNAME .
+*.sincereaccertain.com     CNAME .
+
+; --- Your entries below ------------------------------------------------------

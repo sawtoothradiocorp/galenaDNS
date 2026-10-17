@@ -55,7 +55,7 @@ what a report can and cannot get); privacy requests to
         DoQ  853/udp ─┘   (TLS, rate     (DNSSEC, RPZ,    (dns.quad9.net,
                            limiting)      forwarding)      malware filtering)
                                               │
-                                    allowlist ▸ ads ▸ malicious IPs
+                           allowlist ▸ local blocks ▸ ads ▸ malicious IPs
 ```
 
 unbound binds `127.0.0.1:53` and `[::1]:53` only, so "port 53 is closed" is true
@@ -600,11 +600,12 @@ location, since an address is routed to its site.
 Blocking happens in two places, and the difference matters because only one of
 them is yours to override.
 
-**Locally, as RPZ** — four policy zones, applied in this order, first match wins:
+**Locally, as RPZ** — five policy zones, applied in this order, first match wins:
 
 | Zone | Source | Entries | Blocks |
 |---|---|---|---|
 | `allowlist` | `node/unbound/rpz/allowlist.rpz` | yours (empty by default) | overrides everything below |
+| `blocklist` | `node/unbound/rpz/blocklist.rpz` | yours (9 by default) | blocks locally, ahead of the feeds |
 | `adblock` | Hagezi Pro | ~456,000 | ads, trackers, telemetry |
 | `threat` | Hagezi TIF **mini** | ~401,000 | malware, phishing, scams, C2 |
 | `threatip` | Hagezi TIF IPs | ~34,500 | resolution *to* malicious IPs |
@@ -679,6 +680,30 @@ shared CDN address. The format is `prefixlength.reversed-octets.rpz-ip`, so
 ```
 32.42.113.0.203.rpz-ip CNAME rpz-passthru.
 ```
+
+### Blocking something locally
+
+`node/unbound/rpz/blocklist.rpz` is the counterpart to the allowlist, evaluated
+immediately after it and ahead of every downloaded feed. Same syntax as the
+feeds, and the wildcard does not cover the bare name:
+
+```
+example.com            CNAME .
+*.example.com          CNAME .
+```
+
+Two reasons to reach for it. The first is a name the feeds do not carry yet — a
+fresh report, say — without waiting on a feed maintainer. The second is subtler:
+a name already blocked **upstream**, where you want the block to behave. An
+upstream block surfaces as SERVFAIL rather than NXDOMAIN (see "Two things
+measured after the switch" below), and a client that retries SERVFAIL against a
+fallback resolver escapes it. A local entry answers NXDOMAIN from this node and
+the query never leaves it.
+
+It ships with the nine Citizen Lab AdFection indicators that no feed carried on
+2026-10-16. The header in that file records which nine, the measurement behind
+them, and why the other twenty domains from the same report are deliberately
+not listed.
 
 ### Overriding an upstream block
 
@@ -1002,10 +1027,12 @@ across a reboot there is no forensic trail. Use `journalctl -f` while reproducin
 This used to be the binding constraint, and the numbers here are measured on the
 running node rather than estimated.
 
-**Steady state: 557 MB** for unbound with all four zones loaded (~895,000 RPZ
-entries across allowlist, adblock, threat and threatip), caches cold. That works
-out at ~0.62 KB per entry, and it scales linearly — 491,000 entries measured
-320 MB earlier. dnsdist adds about 64 MB plus its packet cache.
+**Steady state: 557 MB** for unbound with the four feed zones loaded (~895,000
+RPZ entries across allowlist, adblock, threat and threatip), caches cold. That
+works out at ~0.62 KB per entry, and it scales linearly — 491,000 entries
+measured 320 MB earlier. The local blocklist added later is 18 records (nine
+domains) and does not move this number. dnsdist adds about 64 MB plus its
+packet cache.
 
 **After a blocklist reload the same process reads 1366 MB**, and that is the number
 to be careful with. `auth_zone_reload` holds the old and new zone simultaneously,

@@ -132,7 +132,7 @@ the address unlocked.
 | "Your IP is scanning / attacking us" | Almost never this service: its only outbound traffic is to the destinations listed above | Compare destinations and ports. If the target is not Quad9, Let's Encrypt, AWS, jsDelivr, a package mirror or a time server, investigate the node — it would be a real incident. |
 | "Your IP queried our name server" | Misattribution: the nodes forward everything to Quad9 | The nodes send no queries to authoritative servers; `make audit` checks that authoritative servers see Quad9, not us. |
 | "A user of your service did X" (copyright, harassment, fraud) | Someone used the resolver, as millions use any resolver | We host no content and keep no record of who looked up what. We can block a domain or a client going forward, not identify one. |
-| "Your resolver resolves a malicious domain" | A domain no feed has caught yet | Report it to Quad9; consider a local block. |
+| "Your resolver resolves a malicious domain" | A domain no feed has caught yet | Report it to Quad9, and add it to `node/unbound/rpz/blocklist.rpz` — a local entry answers NXDOMAIN from the node instead of waiting on a feed, and does not carry the SERVFAIL behaviour an upstream block does. |
 
 ### Statement template
 
